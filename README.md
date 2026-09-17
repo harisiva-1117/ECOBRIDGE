@@ -108,13 +108,13 @@ Policy/EPR monitoring
 
 ``` text
 ┌─────────────────────────────────────────┐
-│              USER INTERFACES             │
+│              USER INTERFACES            │
 │ Collector App | Recycler | Admin | USSD │
-│                    IVR                   │
+│                    IVR                  │
 └───────────────────┬─────────────────────┘
                     ↓
 ┌─────────────────────────────────────────┐
-│              NestJS BACKEND              │
+│              NestJS BACKEND             │
 │ Auth | Lots | Pricing | Matching        │
 │ Transactions | Traceability | Admin     │
 └───────────────┬───────────────┬─────────┘
@@ -336,10 +336,6 @@ transactions.
 8.  Validate with collectors and a recycler.
 9.  Measure pilot KPIs.
 10. Keep the hackathon MVP focused.
-
-## 📄 License
-
-Add the project's chosen license here.
 
 ------------------------------------------------------------------------
 
