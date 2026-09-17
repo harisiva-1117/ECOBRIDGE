@@ -122,6 +122,9 @@ interface LotPhotoDao {
 
     @Query("SELECT COUNT(*) FROM lot_photos WHERE photoId = :photoId")
     suspend fun photoExists(photoId: String): Int
+
+    @Query("SELECT * FROM lot_photos WHERE photoId = :photoId LIMIT 1")
+    suspend fun getPhotoById(photoId: String): LotPhotoEntity?
 }
 
 @Dao

@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
 import androidx.annotation.VisibleForTesting
+import com.example.BuildConfig
 import com.example.model.RoleType
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.OtpType
@@ -31,18 +32,19 @@ import kotlinx.coroutines.launch
 import kotlin.random.Random
 
 /**
- * Production authentication service backed by the real Supabase (GoTrue) REST API.
+ * Authentication service backed by the real Supabase (GoTrue) REST API.
  *
- * When [DEV_ONLY_OTP_ENABLED] is true (development/testing builds only), the
- * mobile OTP flow is replaced with a self-contained, on-device emulation:
- *   - a random 6-digit code is generated locally (full 000000..999999 range),
- *   - it is displayed directly on the OTP verification screen (never sent via SMS),
- *   - verification is checked locally and produces a synthetic local session.
- * When Supabase (or Google OAuth) is not configured, the REAL flow returns an explicit
- * [AuthErrorCode.PROVIDER_NOT_CONFIGURED] error instead of simulating success.
- *
- * To go back to real Supabase SMS OTP, set [DEV_ONLY_OTP_ENABLED] to false; no UI or
- * business-logic changes are needed.
+ * OTP delivery is selected by the build-time environment variable `OTP_MODE`:
+ *   - `OTP_MODE=demo` (default): the mobile OTP flow is a self-contained, on-device
+ *     emulation. A random 6-digit code is generated locally (full 000000..999999
+ *     range), displayed on the OTP screen as a clearly labelled "Demo OTP" (never
+ *     sent via SMS) and verified locally against an in-memory session with expiry,
+ *     resend cooldown, attempt limit and one-time use. Only the registered demo
+ *     collector number is accepted for the Informal Collector role.
+ *   - `OTP_MODE=sms` (production): the code is generated, delivered and verified by
+ *     Supabase (or the NestJS OTP service); the app never generates, displays, logs
+ *     or speaks the OTP. When the provider is not configured the real flow returns an
+ *     explicit [AuthErrorCode.PROVIDER_NOT_CONFIGURED] error instead of faking success.
  */
 class SupabaseAuthService private constructor(private val context: Context) {
 
@@ -56,15 +58,19 @@ class SupabaseAuthService private constructor(private val context: Context) {
     val authenticatedUser: StateFlow<UserProfile?> = _authenticatedUser.asStateFlow()
 
     /**
-     * Development-only: the latest locally generated OTP that is displayed on the OTP
-     * verification screen so testers can log in without an SMS gateway. Always null when
-     * [DEV_ONLY_OTP_ENABLED] is false or when no code is active.
+     * Demo-mode only: the latest locally generated OTP shown on the OTP verification
+     * screen so testers can sign in without an SMS gateway. Always null when
+     * `OTP_MODE=sms` or when no code is active.
      */
     private val _devDisplayOtp = MutableStateFlow<String?>(null)
     val devDisplayOtp: StateFlow<String?> = _devDisplayOtp.asStateFlow()
 
     private var activeOtpSession: OtpSession? = null
     private var lastResendTimestamp: Long = 0L
+
+    /** True when `OTP_MODE=demo`; any value other than `sms` resolves to demo. */
+    private val demoOtpMode: Boolean =
+        !BuildConfig.OTP_MODE.trim().equals("sms", ignoreCase = true)
 
     companion object {
         private const val TAG = "SupabaseAuthService"
@@ -73,16 +79,12 @@ class SupabaseAuthService private constructor(private val context: Context) {
         private const val MAX_OTP_ATTEMPTS = 3
 
         /**
-         * DEV-ONLY TESTING SWITCH — DO NOT ENABLE IN PRODUCTION.
-         *
-         * When true, the mobile OTP login is emulated entirely on-device:
-         * a random 6-digit code is generated, shown on the verification screen, and
-         * verified locally. No SMS is sent and no Supabase auth session is created.
-         *
-         * Flip to false to restore the real Supabase SMS OTP flow (session creation,
-         * server-side verification, SMS delivery).
+         * Registered demo Informal Collector number. In demo mode this is the only
+         * mobile number accepted for the collector role — do not add dummy numbers.
+         * Configured through `DEMO_OTP_PHONE` in `.env`.
          */
-        private const val DEV_ONLY_OTP_ENABLED = true
+        private val DEMO_REGISTERED_PHONE: String =
+            BuildConfig.DEMO_OTP_PHONE.filter { it.isDigit() }.takeLast(10)
 
         @Volatile
         private var instance: SupabaseAuthService? = null
@@ -114,28 +116,31 @@ class SupabaseAuthService private constructor(private val context: Context) {
     private fun isConfigured(): Boolean = SupabaseAuthConfig.isConfigured()
 
     /**
-     * True when the on-device (no-SMS) OTP emulation is active. The UI uses this to
-     * label the flow as development-only and to surface the generated code.
+     * True when the on-device (no-SMS) demo OTP flow is active (`OTP_MODE=demo`).
+     * The UI uses this to label the flow as Demo Mode and surface the generated code.
      */
-    fun isDevOtpFlowEnabled(): Boolean = DEV_ONLY_OTP_ENABLED
+    fun isDemoOtpMode(): Boolean = demoOtpMode
 
     /**
-     * Step 1: Request a real verification code via the Supabase SMS OTP flow.
-     * Validation, OTP generation, expiry and delivery are all handled by Supabase.
-     * The trailing 10 digits of the phone are retained locally only to drive the UI.
+     * Step 1: Request a verification code.
      *
-     * DEV-ONLY: when [DEV_ONLY_OTP_ENABLED] is true this generates a random 6-digit
-     * code on-device (000000..999999), stores it in the active session and exposes it
-     * via [devDisplayOtp]. No SMS is sent and no network call is made.
+     * `OTP_MODE=demo`: generates a random 6-digit code on-device (000000..999999),
+     * stores it in the active session with expiry/attempts and exposes it via
+     * [devDisplayOtp]. No SMS is sent and no network call is made.
+     *
+     * `OTP_MODE=sms`: requests a real code through Supabase; validation, OTP
+     * generation, expiry and delivery are handled by the provider. The trailing 10
+     * digits of the phone are retained locally only to drive the UI.
      */
     suspend fun generateAndSendOtp(
         destination: OtpDeliveryDestination = OtpDeliveryDestination.MOBILE_SMS,
         phoneNumber: String,
         email: String? = null,
-        googleAccount: String? = null
+        googleAccount: String? = null,
+        targetRole: RoleType? = null
     ): Result<String> {
-        if (DEV_ONLY_OTP_ENABLED) {
-            return generateDevOtp(phoneNumber)
+        if (demoOtpMode) {
+            return generateDevOtp(phoneNumber, targetRole)
         }
         if (!isConfigured()) {
             return Result.failure(IllegalStateException(AuthErrorCode.PROVIDER_NOT_CONFIGURED.userMessage))
@@ -191,9 +196,9 @@ class SupabaseAuthService private constructor(private val context: Context) {
      * Step 2: Verify the code against Supabase and run the statutory post-auth
      * pipeline (account status -> role -> permissions).
      *
-     * DEV-ONLY: when [DEV_ONLY_OTP_ENABLED] is true the entered code is checked
-     * against the locally stored OTP. On success a synthetic [UserProfile] is
-     * created and the Supabase auth session is not involved.
+     * `OTP_MODE=demo`: the entered code is checked against the locally stored OTP.
+     * On success a synthetic local [UserProfile] is created for the requested role.
+     * `OTP_MODE=sms`: the code is verified by Supabase.
      */
     suspend fun verifyOtpAndLogin(
         destination: OtpDeliveryDestination = OtpDeliveryDestination.MOBILE_SMS,
@@ -203,7 +208,7 @@ class SupabaseAuthService private constructor(private val context: Context) {
         enteredOtp: String,
         targetRole: RoleType
     ): AuthResult {
-        if (DEV_ONLY_OTP_ENABLED) {
+        if (demoOtpMode) {
             return verifyDevOtp(phoneNumber, enteredOtp, targetRole)
         }
         if (!isConfigured()) {
@@ -278,6 +283,9 @@ class SupabaseAuthService private constructor(private val context: Context) {
         }
         if (trimmedPassword.length < 6) {
             return failure(AuthErrorCode.INVALID_CREDENTIALS, AuthPipelineStep.AUTHENTICATING_USER, "Password must be at least 6 characters long.")
+        }
+        if (demoOtpMode) {
+            return createDemoEmailSession(trimmedEmail, targetRole)
         }
         if (!isConfigured()) {
             return failure(AuthErrorCode.PROVIDER_NOT_CONFIGURED, AuthPipelineStep.AUTHENTICATING_USER)
@@ -392,67 +400,14 @@ class SupabaseAuthService private constructor(private val context: Context) {
         }
 
         if (profile == null) {
-            // Auto-provision a profile for first-time users (Google, OTP, or email sign-up).
-            val roleString = when (targetRole) {
-                RoleType.INFORMAL_COLLECTOR -> "informal_collector"
-                RoleType.FORMAL_RECYCLER -> "formal_recycler"
-                RoleType.GOVERNMENT_ADMIN -> "government_admin"
-            }
-            val newProfile = ProfileRow(
-                auth_user_id = supabaseUser.id,
-                role = roleString,
-                account_status = "active",
-                display_name = (email ?: phoneNumber) ?: "Registered User",
-                email = email,
-                phone_number = phoneNumber
+            // Profiles are provisioned centrally (see supabase/migrations). The app
+            // never self-assigns a role: a missing profile means the account has not
+            // been onboarded, so access is refused rather than granted.
+            return failure(
+                AuthErrorCode.ROLE_NOT_ASSIGNED,
+                AuthPipelineStep.VERIFYING_ACCOUNT,
+                "This account has no assigned role. Contact the CPCB helpdesk to complete onboarding."
             )
-            // Try upsert (requires unique index on auth_user_id); fall back to plain insert.
-            // Both are guarded by the RLS own_profile policy that CHECKs auth.uid() = auth_user_id.
-            val upsertError = try {
-                client.from("profiles").upsert(newProfile) { onConflict = "auth_user_id" }
-                null
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                e
-            }
-            if (upsertError != null) {
-                try {
-                    val rowJson = Json { ignoreUnknownKeys = true }
-                        .encodeToJsonElement(ProfileRow.serializer(), newProfile)
-                    client.from("profiles").insert(JsonArray(listOf(rowJson)))
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (dup: Exception) {
-                    Log.w(TAG, "Profile upsert/insert failed for ${supabaseUser.id}: ${dup.message}")
-                    return failure(
-                        AuthErrorCode.ROLE_NOT_ASSIGNED,
-                        AuthPipelineStep.VERIFYING_ACCOUNT,
-                        "Auto-provisioning failed. Run this SQL once in Supabase SQL Editor: " +
-                            "CREATE UNIQUE INDEX IF NOT EXISTS profiles_auth_user_id_uidx ON profiles(auth_user_id);"
-                    )
-                }
-            }
-            // Re-read the profile after provisioning
-            val refreshed = try {
-                client.from("profiles")
-                    .select { filter { eq("auth_user_id", supabaseUser.id) } }
-                    .decodeSingleOrNull<ProfileRow>()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.w(TAG, "Profile re-read failed: ${e.message}")
-                null
-            }
-            if (refreshed == null) {
-                return failure(
-                    AuthErrorCode.ROLE_NOT_ASSIGNED,
-                    AuthPipelineStep.VERIFYING_ACCOUNT,
-                    "Profile created but could not be read back. Ensure RLS policy own_profile exists."
-                )
-            }
-            // Continue pipeline with the freshly provisioned profile
-            return executePostAuthPipelineWithProfile(client, supabaseUser, refreshed, authMethod, targetRole, email, phoneNumber)
         }
 
         return executePostAuthPipelineWithProfile(client, supabaseUser, profile, authMethod, targetRole, email, phoneNumber)
@@ -540,19 +495,32 @@ class SupabaseAuthService private constructor(private val context: Context) {
     }
 
     // -----------------------------------------------------------------------
-    // DEV-ONLY: on-device OTP emulation (DO NOT USE IN PRODUCTION)
+    // DEMO MODE (OTP_MODE=demo): on-device OTP — never used when OTP_MODE=sms
     // -----------------------------------------------------------------------
 
     /**
-     * Generate a random 6-digit OTP in the full range 000000..999999.
-     * The code is stored in [activeOtpSession] and displayed via [devDisplayOtp].
-     * No SMS is sent and no network call is made.
+     * Generate a random 6-digit OTP in the full range 000000..999999 for demo mode.
+     * The code is stored in [activeOtpSession] with expiry, attempt limit and
+     * one-time use, and displayed via [devDisplayOtp]. No SMS is sent and no network
+     * call is made. For the Informal Collector role only the registered demo number
+     * ([DEMO_REGISTERED_PHONE]) is accepted.
      */
-    private suspend fun generateDevOtp(phoneNumber: String): Result<String> {
+    private suspend fun generateDevOtp(phoneNumber: String, targetRole: RoleType?): Result<String> {
         val cleanPhone = try {
             requirePhone(phoneNumber)
         } catch (e: IllegalArgumentException) {
             return Result.failure(IllegalArgumentException(e.message ?: "Please enter a valid 10-digit mobile number"))
+        }
+
+        if (targetRole == RoleType.INFORMAL_COLLECTOR &&
+            DEMO_REGISTERED_PHONE.isNotEmpty() &&
+            cleanPhone != DEMO_REGISTERED_PHONE
+        ) {
+            return Result.failure(
+                IllegalStateException(
+                    "This number is not registered for the demo. Use +91 $DEMO_REGISTERED_PHONE."
+                )
+            )
         }
 
         val now = System.currentTimeMillis()
@@ -575,7 +543,7 @@ class SupabaseAuthService private constructor(private val context: Context) {
         )
         lastResendTimestamp = now
         _devDisplayOtp.value = code
-        Log.i(TAG, "[DEV-ONLY] Generated OTP $code for +91 $cleanPhone (no SMS sent)")
+        Log.i(TAG, "[DEMO] Generated OTP $code for +91 $cleanPhone (no SMS sent)")
         return Result.success(code)
     }
 
@@ -659,7 +627,39 @@ class SupabaseAuthService private constructor(private val context: Context) {
         _authenticatedUser.value = profileUser
         saveSession(profileUser)
         _currentPipelineStep.value = AuthPipelineStep.SUCCESS
-        Log.i(TAG, "[DEV-ONLY] OTP verified for +91 $phone — synthetic local session created")
+        Log.i(TAG, "[DEMO] OTP verified for +91 $phone — local session created for ${targetRole.name}")
+        return AuthResult(isSuccess = true, userProfile = profileUser)
+    }
+
+    /**
+     * Demo-mode only: builds an offline local session for recycler/admin email
+     * logins without contacting Supabase. Mirrors [verifyDevOtp] so the whole
+     * role workflow can be exercised without a configured backend.
+     */
+    private fun createDemoEmailSession(email: String, targetRole: RoleType): AuthResult {
+        val (entity, statutory) = when (targetRole) {
+            RoleType.FORMAL_RECYCLER -> "Demo E-Waste Recycling Facility" to "CPCB-RECYCLE-DEMO"
+            RoleType.GOVERNMENT_ADMIN -> "MoEFCC Demo Regulatory Cell" to "MoEFCC-ADMIN-DEMO"
+            RoleType.INFORMAL_COLLECTOR -> "Demo Informal Collector" to DEMO_REGISTERED_PHONE
+        }
+        val profileUser = UserProfile(
+            userId = "dev-email-$email",
+            displayName = email,
+            email = email,
+            phoneNumber = null,
+            role = targetRole,
+            accountStatus = AccountStatus.ACTIVE,
+            permissions = defaultPermissionsOf(targetRole),
+            statutoryIdentifier = statutory,
+            entityName = entity,
+            sessionToken = "",
+            authMethod = AuthMethod.EMAIL_PASSWORD,
+            verifiedTimestamp = System.currentTimeMillis()
+        )
+        _authenticatedUser.value = profileUser
+        saveSession(profileUser)
+        _currentPipelineStep.value = AuthPipelineStep.SUCCESS
+        Log.i(TAG, "[DEMO] Email login for $email — local session created for ${targetRole.name}")
         return AuthResult(isSuccess = true, userProfile = profileUser)
     }
 
@@ -713,7 +713,12 @@ class SupabaseAuthService private constructor(private val context: Context) {
     fun signOut() {
         _authenticatedUser.value = null
         _currentPipelineStep.value = AuthPipelineStep.IDLE
+        // Clear all OTP state (code, expiry, attempts) and the resend cooldown so a
+        // subsequent login starts fresh. Unrelated preferences (e.g. language) live in
+        // a different SharedPreferences file and are intentionally left untouched.
         activeOtpSession = null
+        _devDisplayOtp.value = null
+        lastResendTimestamp = 0L
         prefs.edit().clear().apply()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {

@@ -25,6 +25,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -93,6 +94,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -450,6 +452,10 @@ fun IntroScreen(
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(bottom = 16.dp)
             )
+
+            // Clearance so the docked global voice assistant pill never covers the
+            // last scrollable content.
+            Spacer(modifier = Modifier.height(72.dp))
         }
 
         // Voice Settings Bottom Sheet
@@ -538,14 +544,8 @@ private fun TopHeader(
     onSettingsClick: () -> Unit,
     onDismissDropdown: () -> Unit
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        // Logo & Title
+    // Logo & Title
+    val logoAndTitle: @Composable () -> Unit = {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Image(
                 painter = painterResource(id = R.drawable.ic_ewaste_logo),
@@ -569,8 +569,10 @@ private fun TopHeader(
                 )
             }
         }
+    }
 
-        // Action controls (Camera Scanner, Reminder, Settings & Language Dropdown)
+    // Action controls (Camera Scanner, Reminder, Settings)
+    val actionIcons: @Composable () -> Unit = {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(
                 onClick = onScannerClick,
@@ -613,87 +615,133 @@ private fun TopHeader(
                     modifier = Modifier.size(20.dp)
                 )
             }
+        }
+    }
 
-            Box {
-                Surface(
-                    color = Color.White,
-                    shape = RoundedCornerShape(22.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MintBorder),
-                    shadowElevation = 2.dp,
-                    modifier = Modifier
-                        .clickable(onClick = onDropdownToggle)
-                        .testTag("language_selector_button")
+    // Language dropdown. The label is forced onto a single horizontal line and the
+    // pill has a minimum width so "English"/"हिंदी" never wrap letter-by-letter.
+    val languageSelector: @Composable () -> Unit = {
+        Box {
+            Surface(
+                color = Color.White,
+                shape = RoundedCornerShape(22.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MintBorder),
+                shadowElevation = 2.dp,
+                modifier = Modifier
+                    .widthIn(min = 92.dp)
+                    .clickable(onClick = onDropdownToggle)
+                    .testTag("language_selector_button")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "🌐",
-                            fontSize = 15.sp
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = currentLanguage.displayName,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = ForestGreenPrimary
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "▼",
-                            fontSize = 10.sp,
-                            color = ForestGreenPrimary
-                        )
-                    }
+                    Text(
+                        text = "🌐",
+                        fontSize = 15.sp
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = currentLanguage.displayName,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = ForestGreenPrimary,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Clip
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "▼",
+                        fontSize = 10.sp,
+                        color = ForestGreenPrimary
+                    )
                 }
+            }
 
-                DropdownMenu(
-                    expanded = isDropdownExpanded,
-                    onDismissRequest = onDismissDropdown,
-                    modifier = Modifier
-                        .background(Color.White)
-                        .clip(RoundedCornerShape(16.dp))
-                        .border(1.dp, MintBorder, RoundedCornerShape(16.dp))
-                        .testTag("language_dropdown_menu")
-                ) {
-                    Language.values().forEach { lang ->
-                        DropdownMenuItem(
-                            text = {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 4.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column {
-                                        Text(
-                                            text = lang.displayName,
-                                            fontWeight = if (lang == currentLanguage) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (lang == currentLanguage) ForestGreenPrimary else TextPrimaryDark,
-                                            fontSize = 16.sp
-                                        )
-                                        Text(
-                                            text = lang.code.uppercase(),
-                                            fontSize = 11.sp,
-                                            color = TextSecondaryMuted
-                                        )
-                                    }
-                                    if (lang == currentLanguage) {
-                                        Icon(
-                                            imageVector = Icons.Default.Check,
-                                            contentDescription = "Selected",
-                                            tint = ForestGreenPrimary,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
+            DropdownMenu(
+                expanded = isDropdownExpanded,
+                onDismissRequest = onDismissDropdown,
+                modifier = Modifier
+                    .background(Color.White)
+                    .clip(RoundedCornerShape(16.dp))
+                    .border(1.dp, MintBorder, RoundedCornerShape(16.dp))
+                    .testTag("language_dropdown_menu")
+            ) {
+                Language.values().forEach { lang ->
+                    DropdownMenuItem(
+                        text = {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(
+                                        text = lang.displayName,
+                                        fontWeight = if (lang == currentLanguage) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (lang == currentLanguage) ForestGreenPrimary else TextPrimaryDark,
+                                        fontSize = 16.sp
+                                    )
+                                    Text(
+                                        text = lang.code.uppercase(),
+                                        fontSize = 11.sp,
+                                        color = TextSecondaryMuted
+                                    )
                                 }
-                            },
-                            onClick = { onLanguageSelect(lang) },
-                            modifier = Modifier.padding(horizontal = 8.dp)
-                        )
-                    }
+                                if (lang == currentLanguage) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = "Selected",
+                                        tint = ForestGreenPrimary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        },
+                        onClick = { onLanguageSelect(lang) },
+                        modifier = Modifier.padding(horizontal = 8.dp)
+                    )
+                }
+            }
+        }
+    }
+
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp)
+    ) {
+        // On narrow phone widths the single row cannot fit logo + title + three
+        // icons + the language pill without squeezing the pill into a vertical
+        // letter stack. Below this threshold the controls stack onto a second row.
+        val isNarrow = maxWidth < 400.dp
+
+        if (isNarrow) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                logoAndTitle()
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    actionIcons()
+                    languageSelector()
+                }
+            }
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                logoAndTitle()
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    actionIcons()
+                    languageSelector()
                 }
             }
         }
@@ -917,7 +965,7 @@ private fun VoiceAssistantSection(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Surface(
                     onClick = { onVoiceCommand("open informal collector") },
@@ -925,7 +973,8 @@ private fun VoiceAssistantSection(
                     color = MintPill,
                     border = androidx.compose.foundation.BorderStroke(1.dp, MintBorder),
                     modifier = Modifier
-                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                        .weight(1f)
+                        .padding(vertical = 2.dp)
                         .testTag("quick_voice_collector")
                 ) {
                     Row(
@@ -952,7 +1001,8 @@ private fun VoiceAssistantSection(
                     color = MintPill,
                     border = androidx.compose.foundation.BorderStroke(1.dp, MintBorder),
                     modifier = Modifier
-                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                        .weight(1f)
+                        .padding(vertical = 2.dp)
                         .testTag("quick_voice_recycler")
                 ) {
                     Row(
@@ -978,7 +1028,7 @@ private fun VoiceAssistantSection(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Surface(
                     onClick = { onVoiceCommand("open government admin") },
@@ -986,7 +1036,8 @@ private fun VoiceAssistantSection(
                     color = MintPill,
                     border = androidx.compose.foundation.BorderStroke(1.dp, MintBorder),
                     modifier = Modifier
-                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                        .weight(1f)
+                        .padding(vertical = 2.dp)
                         .testTag("quick_voice_admin")
                 ) {
                     Row(
@@ -1013,7 +1064,8 @@ private fun VoiceAssistantSection(
                     color = MintPill,
                     border = androidx.compose.foundation.BorderStroke(1.dp, MintBorder),
                     modifier = Modifier
-                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                        .weight(1f)
+                        .padding(vertical = 2.dp)
                         .testTag("quick_voice_other")
                 ) {
                     Row(

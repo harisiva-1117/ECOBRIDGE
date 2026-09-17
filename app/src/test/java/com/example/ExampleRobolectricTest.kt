@@ -220,8 +220,19 @@ class ExampleRobolectricTest {
         val authService = com.example.auth.SupabaseAuthService.getInstance(context)
         authService.signOut()
 
-        val phone = "9820144521"
-        val sendResult = authService.sendMobileOtp(phone)
+        // Only the registered demo collector number is accepted in demo mode.
+        val phone = "7708609156"
+        val unregistered = authService.generateAndSendOtp(
+            phoneNumber = "9820144521",
+            targetRole = RoleType.INFORMAL_COLLECTOR
+        )
+        assert(!unregistered.isSuccess)
+
+        authService.signOut()
+        val sendResult = authService.generateAndSendOtp(
+            phoneNumber = phone,
+            targetRole = RoleType.INFORMAL_COLLECTOR
+        )
         assert(sendResult.isSuccess)
         val generatedOtp = sendResult.getOrThrow()
 

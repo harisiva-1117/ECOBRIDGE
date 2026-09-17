@@ -189,6 +189,16 @@ class EwasteRepository(
         return count
     }
 
+    // ---- Point reads (shared by recycler/admin portals) -----------------------
+    suspend fun lotById(lotId: String): MaterialLot? = lotDao.getLotById(lotId)?.toDomainModel()
+
+    suspend fun transactionByLot(lotId: String): TransactionLedgerEntity? =
+        ledgerDao.getTransactionByLot(lotId)
+
+    suspend fun unsyncedLotsNow(): List<MaterialLotEntity> = lotDao.getUnsyncedLotsNow()
+
+    suspend fun allTransactionsNow(): List<TransactionLedgerEntity> = ledgerDao.getAllTransactionsNow()
+
     suspend fun createLot(
         category: MaterialCategory,
         subCategory: String,

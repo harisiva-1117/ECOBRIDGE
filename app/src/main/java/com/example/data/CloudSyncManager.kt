@@ -6,6 +6,10 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Log
 import com.example.auth.SupabaseAuthConfig
+import com.example.model.LotStatus
+import com.example.model.MaterialCategory
+import com.example.model.MaterialLot
+import com.example.model.PaymentMode
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.storage.storage
 import kotlinx.serialization.Serializable
@@ -150,6 +154,48 @@ object CloudSyncManager {
         val longitude: Double = 0.0
     )
 
+    /** Aggregated national metrics from the `v_admin_metrics` role view. */
+    @Serializable
+    data class AdminMetricsDto(
+        val collector_count: Long = 0,
+        val recycler_count: Long = 0,
+        val admin_count: Long = 0,
+        val lot_count: Long = 0,
+        val pending_lot_count: Long = 0,
+        val confirmed_lot_count: Long = 0,
+        val total_weight_kg: Double = 0.0,
+        val settled_value_inr: Double = 0.0
+    )
+
+    /** Read-only market reference row (single source for all roles). */
+    @Serializable
+    data class PriceDto(
+        val price_id: String,
+        val category_name: String,
+        val sub_category: String? = null,
+        val location: String? = null,
+        val prevailing_buy_rate: Double = 0.0,
+        val market_min: Double = 0.0,
+        val market_max: Double = 0.0,
+        val trend: String? = null,
+        val trend_percentage: Double = 0.0,
+        val unit: String = "₹/kg",
+        val date_updated: String? = null,
+        val key_metals_joined: String? = null
+    )
+
+    /** Read-only hazard-safety reference row (single source for all roles). */
+    @Serializable
+    data class SafetyGuidelineDto(
+        val guideline_id: String,
+        val practice_title: String,
+        val why_unsafe: String? = null,
+        val what_is_lost: String? = null,
+        val safe_formal_alternative: String? = null,
+        val icon_emoji: String? = null,
+        val alert_level: String? = null
+    )
+
     data class SyncOutcome(val lotsPushed: Int, val transactionsPushed: Int, val serverReachable: Boolean)
 
     suspend fun syncLotsAndTransactions(
@@ -270,8 +316,9 @@ object CloudSyncManager {
         }
     }
 
-    /** Fetch the public CPCB/SPCB authorized-recycler registry, falling back to
-     *  empty (UI then uses the on-device seeded registry). */
+    /** Fetch the public CPCB/SPCB authorized-recycler registry. The Supabase
+     *  table is the single source of truth; the UI falls back to a static row
+     *  only when the device is offline. */
     suspend fun fetchAuthorizedRecyclers(): List<RemoteRecycler> {
         if (!SupabaseAuthConfig.isConfigured()) return emptyList()
         return try {
@@ -281,6 +328,118 @@ object CloudSyncManager {
         } catch (e: Exception) {
             Log.w(TAG, "Registry fetch failed: ${e.message}")
             emptyList()
+        }
+    }
+
+    // ---- Shared source-of-truth reads (role views + RLS) -------------------
+
+    /** Collector's own lots via `v_collector_my_lots`. */
+    suspend fun fetchCollectorLots(userId: String): List<CollectorLotDto> {
+        if (!SupabaseAuthConfig.isConfigured()) return emptyList()
+        return try {
+            SupabaseAuthConfig.client.from("v_collector_my_lots")
+                .select { filter { eq("collector_user_id", userId) } }
+                .decodeList<CollectorLotDto>()
+        } catch (e: Exception) {
+            Log.w(TAG, "Collector lots fetch failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    /** Collector's own ledger rows via `v_collector_my_transactions`. */
+    suspend fun fetchCollectorTransactions(userId: String): List<CollectorTxnDto> {
+        if (!SupabaseAuthConfig.isConfigured()) return emptyList()
+        return try {
+            SupabaseAuthConfig.client.from("v_collector_my_transactions")
+                .select { filter { eq("collector_user_id", userId) } }
+                .decodeList<CollectorTxnDto>()
+        } catch (e: Exception) {
+            Log.w(TAG, "Collector transactions fetch failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    /** Formal recycler inbound queue via `v_recycler_inbound_lots` (RLS grants
+     *  the formal-recycler role read access to every collector's lots). */
+    suspend fun fetchRecyclerInboundLots(): List<CollectorLotDto> {
+        if (!SupabaseAuthConfig.isConfigured()) return emptyList()
+        return try {
+            SupabaseAuthConfig.client.from("v_recycler_inbound_lots")
+                .select()
+                .decodeList<CollectorLotDto>()
+        } catch (e: Exception) {
+            Log.w(TAG, "Recycler inbound fetch failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    /** Government admin read of the national lot registry. */
+    suspend fun fetchAdminLots(): List<CollectorLotDto> {
+        if (!SupabaseAuthConfig.isConfigured()) return emptyList()
+        return try {
+            SupabaseAuthConfig.client.from("v_admin_lots")
+                .select()
+                .decodeList<CollectorLotDto>()
+        } catch (e: Exception) {
+            Log.w(TAG, "Admin lots fetch failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    suspend fun fetchAdminMetrics(): AdminMetricsDto? {
+        if (!SupabaseAuthConfig.isConfigured()) return null
+        return try {
+            SupabaseAuthConfig.client.from("v_admin_metrics")
+                .select()
+                .decodeSingleOrNull<AdminMetricsDto>()
+        } catch (e: Exception) {
+            Log.w(TAG, "Admin metrics fetch failed: ${e.message}")
+            null
+        }
+    }
+
+    suspend fun fetchMaterialPrices(): List<PriceDto> {
+        if (!SupabaseAuthConfig.isConfigured()) return emptyList()
+        return try {
+            SupabaseAuthConfig.client.from("material_prices").select().decodeList<PriceDto>()
+        } catch (e: Exception) {
+            Log.w(TAG, "Material prices fetch failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    suspend fun fetchSafetyGuidelines(): List<SafetyGuidelineDto> {
+        if (!SupabaseAuthConfig.isConfigured()) return emptyList()
+        return try {
+            SupabaseAuthConfig.client.from("safety_guidelines").select().decodeList<SafetyGuidelineDto>()
+        } catch (e: Exception) {
+            Log.w(TAG, "Safety guidelines fetch failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    /** Upsert a single lot (collector creation or recycler lifecycle update). */
+    suspend fun upsertLot(lot: CollectorLotDto): Boolean {
+        if (!SupabaseAuthConfig.isConfigured()) return false
+        return try {
+            SupabaseAuthConfig.client.from("collector_lots")
+                .upsert(lot) { onConflict = "lot_id" }
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "Lot upsert failed for ${lot.lot_id}: ${e.message}")
+            false
+        }
+    }
+
+    suspend fun upsertTransaction(txn: CollectorTxnDto): Boolean {
+        if (!SupabaseAuthConfig.isConfigured()) return false
+        return try {
+            SupabaseAuthConfig.client.from("collector_transactions")
+                .upsert(txn) { onConflict = "transaction_id" }
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "Transaction upsert failed for ${txn.transaction_id}: ${e.message}")
+            false
         }
     }
 
@@ -413,3 +572,135 @@ private fun AuditLogEntity.toDto(userId: String): CloudSyncManager.AuditLogDto =
         detail_json = detailJson,
         created_at = createdAt
     )
+
+// ---- Remote -> local cache / domain mappers ---------------------------------
+
+fun MaterialLot.toCollectorLotDto(collectorUserId: String): CloudSyncManager.CollectorLotDto =
+    CloudSyncManager.CollectorLotDto(
+        lot_id = lotId,
+        collector_user_id = collectorUserId,
+        category_name = category.name,
+        sub_category = subCategory,
+        weight_kg = weightKg,
+        condition = condition,
+        estimated_value_inr = estimatedValueInr,
+        quoted_rate_per_kg = quotedRatePerKg,
+        collection_timestamp = collectionTimestamp,
+        collection_location = collectionLocation,
+        gps_coordinates = gpsCoordinates,
+        matched_recycler_id = matchedRecyclerId,
+        matched_recycler_name = matchedRecyclerName,
+        status_name = status.name,
+        payment_mode = paymentMode.name,
+        handover_receipt_number = handoverReceiptNumber,
+        recycler_confirmed = recyclerConfirmed,
+        epr_certificate_no = eprCertificateNo
+    )
+
+fun CloudSyncManager.CollectorLotDto.toEntity(): MaterialLotEntity = MaterialLotEntity(
+    lotId = lot_id,
+    categoryName = category_name,
+    subCategory = sub_category,
+    weightKg = weight_kg,
+    condition = condition,
+    imageUri = null,
+    estimatedValueInr = estimated_value_inr,
+    quotedRatePerKg = quoted_rate_per_kg,
+    collectionTimestamp = collection_timestamp,
+    collectionLocation = collection_location,
+    gpsCoordinates = gps_coordinates,
+    matchedRecyclerId = matched_recycler_id,
+    matchedRecyclerName = matched_recycler_name,
+    statusName = status_name,
+    paymentModeName = payment_mode,
+    handoverReceiptNumber = handover_receipt_number,
+    recyclerConfirmed = recycler_confirmed,
+    eprCertificateNo = epr_certificate_no,
+    isSynced = true
+)
+
+fun CloudSyncManager.CollectorLotDto.toMaterialLot(): MaterialLot {
+    val category = runCatching { MaterialCategory.valueOf(category_name) }
+        .getOrDefault(MaterialCategory.PCB_BOARDS)
+    val status = runCatching { LotStatus.valueOf(status_name) }
+        .getOrDefault(LotStatus.VALUATED)
+    val payment = runCatching { PaymentMode.valueOf(payment_mode) }
+        .getOrDefault(PaymentMode.CASH)
+    return MaterialLot(
+        lotId = lot_id,
+        category = category,
+        subCategory = sub_category,
+        weightKg = weight_kg,
+        condition = condition,
+        estimatedValueInr = estimated_value_inr,
+        quotedRatePerKg = quoted_rate_per_kg,
+        collectionTimestamp = collection_timestamp,
+        collectionLocation = collection_location,
+        gpsCoordinates = gps_coordinates,
+        matchedRecyclerId = matched_recycler_id,
+        matchedRecyclerName = matched_recycler_name,
+        status = status,
+        paymentMode = payment,
+        handoverReceiptNumber = handover_receipt_number,
+        recyclerConfirmed = recycler_confirmed,
+        eprCertificateNo = epr_certificate_no,
+        isSynced = true
+    )
+}
+
+fun CloudSyncManager.CollectorTxnDto.toEntity(): TransactionLedgerEntity = TransactionLedgerEntity(
+    transactionId = transaction_id,
+    lotId = lot_id,
+    categoryName = category_name,
+    weightKg = weight_kg,
+    ratePerKg = rate_per_kg,
+    totalAmountInr = total_amount_inr,
+    paymentMode = payment_mode,
+    recyclerName = recycler_name,
+    timestamp = timestamp,
+    receiptNumber = receipt_number,
+    isSettled = is_settled
+)
+
+fun CloudSyncManager.PriceDto.toEntity(): PriceRecordEntity = PriceRecordEntity(
+    id = price_id,
+    categoryName = category_name,
+    subCategory = sub_category ?: "",
+    location = location ?: "",
+    prevailingBuyRate = prevailing_buy_rate,
+    marketMin = market_min,
+    marketMax = market_max,
+    trend = trend ?: "STABLE",
+    trendPercentage = trend_percentage,
+    unit = unit,
+    dateUpdated = date_updated ?: "",
+    keyMetalsJoined = key_metals_joined ?: ""
+)
+
+fun CloudSyncManager.SafetyGuidelineDto.toEntity(): SafetyGuidelineEntity = SafetyGuidelineEntity(
+    id = guideline_id,
+    practiceTitle = practice_title,
+    whyUnsafe = why_unsafe ?: "",
+    whatIsLost = what_is_lost ?: "",
+    safeFormalAlternative = safe_formal_alternative ?: "",
+    iconEmoji = icon_emoji ?: "",
+    alertLevel = alert_level ?: "HIGH"
+)
+
+fun CloudSyncManager.RemoteRecycler.toEntity(): RecyclerEntity = RecyclerEntity(
+    recyclerId = recycler_id,
+    name = name,
+    facilityLocation = facility_location ?: "",
+    city = city ?: "",
+    distanceKm = distance_km,
+    cpcbRegNo = cpcb_reg_no ?: "",
+    authorizationValidity = authorization_validity ?: "",
+    phone = phone ?: "",
+    acceptedCategoriesJoined = accepted_categories ?: "",
+    ratesJson = "",
+    doorstepPickup = doorstep_pickup,
+    minWeightForPickupKg = min_weight_for_pickup_kg,
+    rating = rating.toFloat(),
+    latitude = latitude,
+    longitude = longitude
+)

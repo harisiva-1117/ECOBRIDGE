@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -90,6 +91,7 @@ import com.example.auth.SupabaseAuthService
 import com.example.i18n.LanguageManager
 import com.example.model.Language
 import com.example.model.RoleType
+import com.example.ui.admin.AdminViewModel
 import com.example.ui.admin.GovernmentAdminPortalScreen
 import com.example.ui.collector.CollectorDashboardScreen
 import com.example.ui.collector.CollectorDashboardViewModel
@@ -97,6 +99,7 @@ import com.example.ui.components.OtpVerificationComponent
 import com.example.ui.components.ResendTimerView
 import com.example.ui.components.SixDigitOtpInputField
 import com.example.ui.recycler.FormalRecyclerPortalScreen
+import com.example.ui.recycler.RecyclerViewModel
 import com.example.ui.theme.BackgroundCream
 import com.example.ui.theme.EmeraldAccent
 import com.example.ui.theme.ForestGreenDark
@@ -106,6 +109,7 @@ import com.example.ui.theme.MintLight
 import com.example.ui.theme.SuccessGreen
 import com.example.ui.theme.TextPrimaryDark
 import com.example.ui.theme.TextSecondaryMuted
+import com.example.ui.theme.WarningAmber
 import com.example.voice.AuthUiAction
 import com.example.voice.VoiceEngine
 import kotlinx.coroutines.delay
@@ -117,10 +121,9 @@ import kotlinx.coroutines.launch
  * - Email & Password
  * - Continue with Google (Credential Manager + Supabase ID token exchange)
  *
- * In production the OTP is created, delivered and verified by Supabase and is never
- * generated, displayed, logged or spoken by the app. When the development-only OTP
- * emulation is enabled (SupabaseAuthService.DEV_ONLY_OTP_ENABLED == true), the code is
- * generated on-device and displayed in a clearly-labelled development banner.
+ * With `OTP_MODE=sms` the OTP is created, delivered and verified by the provider and is
+ * never generated, displayed, logged or spoken by the app. With `OTP_MODE=demo` the code
+ * is generated on-device and shown in a clearly-labelled "Demo OTP" banner.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -136,7 +139,17 @@ fun UnifiedRoleAuthScreen(
     val googleAuthManager = remember { GoogleAuthManager(context) }
 
     // Authentication States
-    var selectedAuthMethod by remember { mutableStateOf(AuthMethod.OTP_AUTHENTICATION) }
+    // In demo mode the Informal Collector flow opens on the mobile OTP tab so the single
+    // registered demo number can be exercised directly.
+    var selectedAuthMethod by remember {
+        mutableStateOf(
+            if (authService.isDemoOtpMode() && role == RoleType.INFORMAL_COLLECTOR) {
+                AuthMethod.OTP_AUTHENTICATION
+            } else {
+                AuthMethod.EMAIL_PASSWORD
+            }
+        )
+    }
     var phoneNumber by remember { mutableStateOf("") }
     var otpCode by remember { mutableStateOf("") }
     var emailInput by remember { mutableStateOf("") }
@@ -190,16 +203,17 @@ fun UnifiedRoleAuthScreen(
             infoMessage = null
             val result = authService.generateAndSendOtp(
                 destination = OtpDeliveryDestination.MOBILE_SMS,
-                phoneNumber = phoneNumber
+                phoneNumber = phoneNumber,
+                targetRole = role
             )
             isVerifying = false
-            result.onSuccess { otpCodePayload ->
+            result.onSuccess {
                 isOtpRequested = true
                 otpCode = ""
-                if (authService.isDevOtpFlowEnabled()) {
-                    infoMessage = "DEV TESTING ONLY — Verification code generated locally. SMS gateway not contacted."
+                if (authService.isDemoOtpMode()) {
+                    infoMessage = "Demo Mode — a random 6-digit Demo OTP was generated and is shown below. No SMS was sent."
                     voiceEngine?.speak(
-                        "Development mode. Verification code displayed on screen. No SMS was sent.",
+                        "Demo mode. Your O T P is displayed on screen. No S M S was sent.",
                         language
                     )
                 } else {
@@ -303,11 +317,11 @@ fun UnifiedRoleAuthScreen(
                 )
             }
             RoleType.FORMAL_RECYCLER -> {
-                val collectorVm = remember {
-                    CollectorDashboardViewModel(context.applicationContext as Application)
+                val recyclerVm = remember {
+                    RecyclerViewModel(context.applicationContext as Application)
                 }
                 FormalRecyclerPortalScreen(
-                    viewModel = collectorVm,
+                    viewModel = recyclerVm,
                     facilityName = user.entityName,
                     cpcbNumber = user.statutoryIdentifier,
                     language = language,
@@ -318,7 +332,11 @@ fun UnifiedRoleAuthScreen(
                 )
             }
             RoleType.GOVERNMENT_ADMIN -> {
+                val adminVm = remember {
+                    AdminViewModel(context.applicationContext as Application)
+                }
                 GovernmentAdminPortalScreen(
+                    viewModel = adminVm,
                     adminId = user.statutoryIdentifier,
                     language = language,
                     onBack = {
@@ -387,6 +405,7 @@ fun UnifiedRoleAuthScreen(
                 .fillMaxSize()
                 .background(BackgroundCream)
                 .padding(padding)
+                .imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 18.dp, vertical = 14.dp),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -589,6 +608,7 @@ fun UnifiedRoleAuthScreen(
                         resendCountdown = resendCountdown,
                         isVerifying = isVerifying,
                         devOtp = devDisplayOtp,
+                        isDemoMode = authService.isDemoOtpMode(),
                         language = language,
                         onGenerateOtp = sendOtpAction,
                         onVerifyLogin = verifyOtpAction,
@@ -610,6 +630,13 @@ fun UnifiedRoleAuthScreen(
                         onPasswordChange = { passwordInput = it },
                         isVerifying = isVerifying,
                         language = language,
+                        demoEmail = if (authService.isDemoOtpMode()) {
+                            when (role) {
+                                RoleType.FORMAL_RECYCLER -> "recycler@ecobridges.demo"
+                                RoleType.GOVERNMENT_ADMIN -> "admin@ecobridges.demo"
+                                RoleType.INFORMAL_COLLECTOR -> "collector@ecobridges.demo"
+                            }
+                        } else null,
                         onLogin = {
                             if (!emailInput.contains("@") || emailInput.length < 5) {
                                 errorMessage = "Please enter a valid registered email address."
@@ -739,6 +766,7 @@ private fun PhoneOtpAuthCard(
     resendCountdown: Int,
     isVerifying: Boolean,
     devOtp: String?,
+    isDemoMode: Boolean,
     language: Language,
     onGenerateOtp: () -> Unit,
     onVerifyLogin: () -> Unit,
@@ -802,7 +830,13 @@ private fun PhoneOtpAuthCard(
                         shape = RoundedCornerShape(14.dp),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = ForestGreenPrimary,
-                            focusedLabelColor = ForestGreenPrimary
+                            focusedLabelColor = ForestGreenPrimary,
+                            // Keep typed text dark so it is never invisible on the
+                            // white field background, regardless of system theme.
+                            focusedTextColor = TextPrimaryDark,
+                            unfocusedTextColor = TextPrimaryDark,
+                            disabledTextColor = TextPrimaryDark,
+                            cursorColor = ForestGreenPrimary
                         ),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -824,7 +858,11 @@ private fun PhoneOtpAuthCard(
                         if (isVerifying) {
                             CircularProgressIndicator(color = Color.White, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Sending Code...", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = if (isDemoMode) "Generating Demo OTP..." else "Sending Code...",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                         } else {
                             Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
@@ -839,7 +877,11 @@ private fun PhoneOtpAuthCard(
                     Spacer(modifier = Modifier.height(12.dp))
 
                     Text(
-                        text = "A 6-digit verification code will be sent to your mobile via SMS.",
+                        text = if (isDemoMode) {
+                            "Demo Mode — a random 6-digit Demo OTP will be generated and shown here. No SMS is sent."
+                        } else {
+                            "A 6-digit verification code will be sent to your mobile via SMS."
+                        },
                         fontSize = 10.sp,
                         color = TextSecondaryMuted,
                         lineHeight = 14.sp
@@ -850,7 +892,11 @@ private fun PhoneOtpAuthCard(
             AnimatedVisibility(visible = isOtpRequested) {
                 Column {
                     Text(
-                        text = "We sent a 6-digit verification code to",
+                        text = if (isDemoMode) {
+                            "Demo OTP generated for"
+                        } else {
+                            "We sent a 6-digit verification code to"
+                        },
                         fontSize = 11.sp,
                         color = TextSecondaryMuted,
                         modifier = Modifier.testTag("auth_otp_sent_to")
@@ -904,7 +950,7 @@ private fun PhoneOtpAuthCard(
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = "DEVELOPMENT TESTING ONLY",
+                                        text = "DEMO MODE — OTP",
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 11.sp,
                                         color = Color(0xFFF57F17)
@@ -912,7 +958,7 @@ private fun PhoneOtpAuthCard(
                                 }
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    text = "Your verification code is:",
+                                    text = "Your Demo OTP is:",
                                     fontSize = 12.sp,
                                     color = TextSecondaryMuted
                                 )
@@ -927,7 +973,7 @@ private fun PhoneOtpAuthCard(
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    text = "Enter this code to sign in. No SMS was sent.",
+                                    text = "Enter this Demo OTP to sign in. No SMS was sent.",
                                     fontSize = 10.sp,
                                     color = TextSecondaryMuted,
                                     lineHeight = 14.sp
@@ -1026,6 +1072,7 @@ private fun EmailPasswordAuthCard(
     onPasswordChange: (String) -> Unit,
     isVerifying: Boolean,
     language: Language,
+    demoEmail: String? = null,
     onLogin: () -> Unit
 ) {
     Card(
@@ -1048,6 +1095,23 @@ private fun EmailPasswordAuthCard(
                 lineHeight = 16.sp
             )
 
+            if (demoEmail != null) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    color = WarningAmber.copy(alpha = 0.14f),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "DEMO MODE — sign in offline with $demoEmail and any password of 6+ characters.",
+                        fontSize = 11.sp,
+                        color = TextPrimaryDark,
+                        lineHeight = 15.sp,
+                        modifier = Modifier.padding(10.dp)
+                    )
+                }
+            }
+
             Spacer(modifier = Modifier.height(14.dp))
 
             OutlinedTextField(
@@ -1064,7 +1128,11 @@ private fun EmailPasswordAuthCard(
                 shape = RoundedCornerShape(14.dp),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = ForestGreenPrimary,
-                    focusedLabelColor = ForestGreenPrimary
+                    focusedLabelColor = ForestGreenPrimary,
+                    focusedTextColor = TextPrimaryDark,
+                    unfocusedTextColor = TextPrimaryDark,
+                    disabledTextColor = TextPrimaryDark,
+                    cursorColor = ForestGreenPrimary
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1087,7 +1155,11 @@ private fun EmailPasswordAuthCard(
                 shape = RoundedCornerShape(14.dp),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = ForestGreenPrimary,
-                    focusedLabelColor = ForestGreenPrimary
+                    focusedLabelColor = ForestGreenPrimary,
+                    focusedTextColor = TextPrimaryDark,
+                    unfocusedTextColor = TextPrimaryDark,
+                    disabledTextColor = TextPrimaryDark,
+                    cursorColor = ForestGreenPrimary
                 ),
                 modifier = Modifier
                     .fillMaxWidth()

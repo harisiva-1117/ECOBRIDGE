@@ -1,11 +1,11 @@
 package com.example.ui.admin
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,18 +14,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountBalance
-import androidx.compose.material.icons.filled.Assessment
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.People
-import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -34,6 +33,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -48,19 +49,24 @@ import com.example.ui.theme.EmeraldAccent
 import com.example.ui.theme.ForestGreenDark
 import com.example.ui.theme.ForestGreenPrimary
 import com.example.ui.theme.MintBorder
-import com.example.ui.theme.MintLight
 import com.example.ui.theme.SuccessGreen
 import com.example.ui.theme.TextPrimaryDark
 import com.example.ui.theme.TextSecondaryMuted
 import com.example.ui.theme.WarningAmber
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GovernmentAdminPortalScreen(
+    viewModel: AdminViewModel,
     adminId: String,
     language: Language,
     onBack: () -> Unit
 ) {
+    val metrics by viewModel.metrics.collectAsState()
+    val lots by viewModel.lots.collectAsState()
+    val isSyncing by viewModel.isSyncing.collectAsState()
+
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
@@ -91,6 +97,26 @@ fun GovernmentAdminPortalScreen(
                         )
                     }
                 },
+                actions = {
+                    IconButton(
+                        onClick = { viewModel.refresh() },
+                        modifier = Modifier.testTag("admin_refresh")
+                    ) {
+                        if (isSyncing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = ForestGreenPrimary
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Refresh",
+                                tint = ForestGreenPrimary
+                            )
+                        }
+                    }
+                },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.White)
             )
         }
@@ -103,7 +129,6 @@ fun GovernmentAdminPortalScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // National EPR Monitor Banner
             item {
                 Card(
                     shape = RoundedCornerShape(18.dp),
@@ -143,165 +168,173 @@ fun GovernmentAdminPortalScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Card(
-                                shape = RoundedCornerShape(12.dp),
-                                colors = CardDefaults.cardColors(containerColor = EmeraldAccent.copy(alpha = 0.15f)),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Column(modifier = Modifier.padding(10.dp)) {
-                                    Text(text = "Backyard Diversion", color = Color.White.copy(alpha = 0.8f), fontSize = 10.sp)
-                                    Text(text = "84.6%", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                                    Text(text = "+22% this quarter", color = EmeraldAccent, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-
-                            Card(
-                                shape = RoundedCornerShape(12.dp),
-                                colors = CardDefaults.cardColors(containerColor = EmeraldAccent.copy(alpha = 0.15f)),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Column(modifier = Modifier.padding(10.dp)) {
-                                    Text(text = "Informal Collectors", color = Color.White.copy(alpha = 0.8f), fontSize = 10.sp)
-                                    Text(text = "12,480", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                                    Text(text = "Directly registered", color = EmeraldAccent, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-
-                            Card(
-                                shape = RoundedCornerShape(12.dp),
-                                colors = CardDefaults.cardColors(containerColor = EmeraldAccent.copy(alpha = 0.15f)),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Column(modifier = Modifier.padding(10.dp)) {
-                                    Text(text = "EPR Traceability", color = Color.White.copy(alpha = 0.8f), fontSize = 10.sp)
-                                    Text(text = "100%", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                                    Text(text = "Digital QR Verified", color = EmeraldAccent, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
+                            MetricTile("Informal Collectors", "${metrics.collectors}", "Registered accounts")
+                            MetricTile("Formal Recyclers", "${metrics.recyclers}", "Authorized facilities")
+                            MetricTile("Registered Lots", "${metrics.lots}", "Shared cloud records")
                         }
                     }
                 }
             }
 
-            // Field Research & Collector Usability Studies
+            item {
+                Card(
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MintBorder),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("admin_metrics_card")
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "Live EPR Traceability Metrics",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = TextPrimaryDark
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            MetricTileLight("Awaiting Weigh-In", "${metrics.pendingLots}", WarningAmber)
+                            MetricTileLight("Verified & Paid", "${metrics.confirmedLots}", SuccessGreen)
+                            MetricTileLight(
+                                "Formalization",
+                                String.format(Locale.US, "%.1f%%", metrics.formalizationPercent),
+                                ForestGreenPrimary
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            MetricTileLight(
+                                "Traceable Weight",
+                                String.format(Locale.US, "%.1f kg", metrics.totalWeightKg),
+                                ForestGreenPrimary
+                            )
+                            MetricTileLight(
+                                "Settled Payout",
+                                String.format(Locale.US, "₹%.0f", metrics.settledValueInr),
+                                ForestGreenPrimary
+                            )
+                        }
+                    }
+                }
+            }
+
             item {
                 Text(
-                    text = "Field Research Involving Working Scrap Collectors",
+                    text = "Shared Traceability Records",
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
                     color = TextPrimaryDark
                 )
             }
 
-            // Case Study 1: Ramu Yadav
-            item {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MintBorder),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .clip(CircleShape)
-                                    .background(MintLight),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(text = "👤", fontSize = 18.sp)
-                            }
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column {
-                                Text(text = "Subject 1: Ramu Yadav (Age 42)", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = TextPrimaryDark)
-                                Text(text = "Dharavi Scrap Aggregator, Mumbai • 14 Years Collecting", fontSize = 11.sp, color = TextSecondaryMuted)
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        Card(
-                            shape = RoundedCornerShape(10.dp),
-                            colors = CardDefaults.cardColors(containerColor = MintLight.copy(alpha = 0.5f)),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text(text = "• Baseline: Sold scrap motherboards to local middlemen at ₹240/kg (often cheated on mechanical scale weight).", fontSize = 11.sp, color = TextSecondaryMuted)
-                                Text(text = "• Platform Outcome: Received ₹380/kg from EcoReclaim Refineries with digital weighing scale and instant cash payment.", fontSize = 11.sp, color = ForestGreenDark, fontWeight = FontWeight.SemiBold)
-                                Text(text = "• Monthly Net Income: Increased from ₹14,200 to ₹21,800 (+53.5% gain) without police harassment.", fontSize = 11.sp, color = SuccessGreen, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Case Study 2: Sunita Devi
-            item {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MintBorder),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .clip(CircleShape)
-                                    .background(MintLight),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(text = "👤", fontSize = 18.sp)
-                            }
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column {
-                                Text(text = "Subject 2: Sunita Devi (Age 38)", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = TextPrimaryDark)
-                                Text(text = "Waste-Picker & Itinerant Aggregator, Pune • Low-Literacy User", fontSize = 11.sp, color = TextSecondaryMuted)
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        Card(
-                            shape = RoundedCornerShape(10.dp),
-                            colors = CardDefaults.cardColors(containerColor = MintLight.copy(alpha = 0.5f)),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text(text = "• Usability Finding: Could not read English or fine text; relied on Marathi voice readout and pictorial icons for cables and batteries.", fontSize = 11.sp, color = TextSecondaryMuted)
-                                Text(text = "• Health Finding: Stopped burning PVC cables after understanding dioxin lung hazards; now hands over unburned wire bundles.", fontSize = 11.sp, color = ForestGreenDark, fontWeight = FontWeight.SemiBold)
-                                Text(text = "• Payment: Receives instant cash handover receipt with verifiable QR code accepted at regional Swachh Bharat aggregation centers.", fontSize = 11.sp, color = SuccessGreen, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Platform Sustainability & Unit Economics Model
-            item {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = ForestGreenPrimary),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(imageVector = Icons.Default.Shield, contentDescription = null, tint = EmeraldAccent, modifier = Modifier.size(20.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(text = "How the Platform Sustains Operations", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
+            if (lots.isEmpty()) {
+                item {
+                    Card(
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MintBorder),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("admin_empty_state")
+                    ) {
                         Text(
-                            text = "1. Recycler EPR Service Fee: Authorized recyclers pay a 1.5% transaction facilitation fee to obtain verified, audit-ready EPR credit certificates for electronics brands (OEMs).\n2. Recovery Value Surplus: High-tech hydrometallurgical recovery extracts gold, palladium, and rare-earths yielding ~₹90/kg net value surplus above informal burning.\n3. Zero Compliance Cost for Collectors: Completely free for informal waste pickers with cash settlement.",
-                            color = Color.White.copy(alpha = 0.9f),
-                            fontSize = 11.sp,
-                            lineHeight = 17.sp
+                            text = "No traceability records yet. A lot created by the informal collector and confirmed by the formal recycler appears here automatically.",
+                            fontSize = 12.sp,
+                            color = TextSecondaryMuted,
+                            modifier = Modifier.padding(16.dp)
                         )
                     }
                 }
             }
+
+            items(lots) { lot ->
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MintBorder),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(text = lot.lotId, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = ForestGreenPrimary)
+                                Text(
+                                    text = "${lot.category.getTitle(language)} • ${lot.weightKg} kg",
+                                    fontSize = 13.sp,
+                                    color = TextPrimaryDark
+                                )
+                                Text(
+                                    text = "Collector: ${lot.matchedRecyclerName ?: "—"}",
+                                    fontSize = 10.sp,
+                                    color = TextSecondaryMuted
+                                )
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (lot.recyclerConfirmed) SuccessGreen.copy(alpha = 0.15f) else WarningAmber.copy(alpha = 0.15f)
+                            ) {
+                                Text(
+                                    text = if (lot.recyclerConfirmed) "VERIFIED & PAID" else "AWAITING WEIGH-IN",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (lot.recyclerConfirmed) SuccessGreen else WarningAmber,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(text = "Location: ${lot.collectionLocation}", fontSize = 11.sp, color = TextSecondaryMuted)
+                            Text(text = "Value: ₹${lot.estimatedValueInr.toInt()}", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = ForestGreenPrimary)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RowScope.MetricTile(label: String, value: String, caption: String) {
+    Card(
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = EmeraldAccent.copy(alpha = 0.15f)),
+        modifier = Modifier.weight(1f)
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Text(text = label, color = Color.White.copy(alpha = 0.8f), fontSize = 10.sp)
+            Text(text = value, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+            Text(text = caption, color = EmeraldAccent, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun RowScope.MetricTileLight(label: String, value: String, accent: Color) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = accent.copy(alpha = 0.10f),
+        modifier = Modifier.weight(1f)
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Text(text = label, color = TextSecondaryMuted, fontSize = 10.sp)
+            Text(text = value, color = accent, fontWeight = FontWeight.Bold, fontSize = 18.sp)
         }
     }
 }

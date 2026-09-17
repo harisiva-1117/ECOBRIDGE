@@ -1,6 +1,5 @@
 package com.example.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -48,7 +47,11 @@ private val DarkColorScheme =
 
 @Composable
 fun MyApplicationTheme(
-  darkTheme: Boolean = isSystemInDarkTheme(),
+  // The ECOBRIDGES UI is authored against the light brand palette (cream
+  // backgrounds, white cards, forest-green accents with explicit light colours).
+  // Following the system dark scheme would render light-on-white text (e.g. an
+  // invisible mobile-number field), so the light scheme is used consistently.
+  darkTheme: Boolean = false,
   // Keep intentional brand identity by default
   dynamicColor: Boolean = false,
   content: @Composable () -> Unit,

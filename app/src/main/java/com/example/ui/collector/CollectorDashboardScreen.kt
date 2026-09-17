@@ -1,7 +1,9 @@
 package com.example.ui.collector
 
 import android.content.Intent
+import android.graphics.Bitmap
 import android.net.Uri
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -40,13 +42,11 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Verified
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
@@ -65,6 +65,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -101,6 +102,8 @@ import com.example.ui.theme.SuccessGreen
 import com.example.ui.theme.TextPrimaryDark
 import com.example.ui.theme.TextSecondaryMuted
 import com.example.ui.theme.WarningAmber
+import java.io.File
+import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -138,8 +141,11 @@ fun CollectorDashboardScreen(
     var activeTab by remember { mutableIntStateOf(0) } // 0: Lots, 1: Rates, 2: Recyclers, 3: Safety, 4: Ledger & Economics
     var showMapView by remember { mutableStateOf(false) }
     var showScannerView by remember { mutableStateOf(false) }
-    var showCreateDialog by remember { mutableStateOf(false) }
+    // Persisted across activity recreation (e.g. returning from the system
+    // camera / photo picker) so an in-progress Create Lot draft is not lost.
+    var showCreateDialog by rememberSaveable { mutableStateOf(false) }
     var initialCategoryForLot by remember { mutableStateOf<MaterialCategory?>(null) }
+    var initialPhotoForLot by rememberSaveable { mutableStateOf<String?>(null) }
 
     // Collect voice-driven collector operations (hands-free dashboard control)
     val collectorRouter = viewModel.voiceEngine?.router
@@ -150,6 +156,7 @@ fun CollectorDashboardScreen(
                 is com.example.voice.CollectorAction.AnalyzeCurrentLot -> {
                     if (!showCreateDialog) {
                         initialCategoryForLot = null
+                        initialPhotoForLot = null
                         showCreateDialog = true
                     }
                 }
@@ -177,21 +184,14 @@ fun CollectorDashboardScreen(
         EwasteCameraScannerScreen(
             language = language,
             onBack = { showScannerView = false },
-            onAcceptLotToDashboard = { scanResult ->
+            onProceedToCreateLot = { scanResult, bitmap ->
+                // Prefill the Create Lot workflow (category + captured photo) so the
+                // collector reviews the image, enters the real weight and explicitly
+                // confirms before any lot record is written.
                 showScannerView = false
-                viewModel.createNewLot(
-                    category = scanResult.identifiedCategory,
-                    subCategory = scanResult.itemName,
-                    weightKg = scanResult.estimatedWeightKg,
-                    condition = if (scanResult.isHazardous) "Scanned • Intact (Hazardous)" else "Scanned • Standard E-Waste",
-                    location = "Local Collection Point",
-                    gpsCoordinates = "19.0760, 72.8777",
-                    matchedRecycler = com.example.ai.RecyclerMatcher
-                        .topMatch(scanResult.identifiedCategory, scanResult.estimatedWeightKg, recyclers)
-                        ?.recycler
-                        ?: recyclers.firstOrNull(),
-                    paymentMode = PaymentMode.CASH
-                )
+                initialCategoryForLot = scanResult.identifiedCategory
+                initialPhotoForLot = bitmap?.let { saveBitmapToCache(context, it) }
+                showCreateDialog = true
             },
             onSpeakText = { text, lang ->
                 viewModel.voiceEngine?.speak(text, lang)
@@ -350,68 +350,6 @@ fun CollectorDashboardScreen(
                 }
             }
         },
-        floatingActionButton = {
-            if (activeTab == 0) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Quick AI Camera Scan FAB
-                    FloatingActionButton(
-                        onClick = { showScannerView = true },
-                        containerColor = MintLight,
-                        contentColor = ForestGreenPrimary,
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier.testTag("ai_camera_scan_fab")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(imageVector = Icons.Default.CameraAlt, contentDescription = "Scan Item")
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = when (language) {
-                                    Language.ENGLISH -> "Scan E-Waste"
-                                    Language.HINDI -> "स्कैन करें"
-                                    Language.MARATHI -> "स्कॅन करा"
-                                },
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp
-                            )
-                        }
-                    }
-
-                    // Create Lot FAB
-                    FloatingActionButton(
-                        onClick = {
-                            initialCategoryForLot = null
-                            showCreateDialog = true
-                        },
-                        containerColor = ForestGreenPrimary,
-                        contentColor = Color.White,
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier.testTag("create_new_lot_fab")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(imageVector = Icons.Default.Add, contentDescription = "Create Lot")
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = when (language) {
-                                    Language.ENGLISH -> "Create Lot"
-                                    Language.HINDI -> "लॉट बनाएं"
-                                    Language.MARATHI -> "लॉट तयार करा"
-                                },
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                }
-            }
-        }
     ) { paddingValues ->
         Box(
             modifier = Modifier
@@ -438,8 +376,10 @@ fun CollectorDashboardScreen(
                     onSpeakSafetyItem = { item -> viewModel.speakSafety(item, language) },
                     onNavigateToSafetyTab = { activeTab = 4 },
                     onSelectLot = { lot -> viewModel.selectLot(lot) },
+                    onScanEwaste = { showScannerView = true },
                     onCreateLot = {
                         initialCategoryForLot = null
+                        initialPhotoForLot = null
                         showCreateDialog = true
                     },
                     anomalousLotIds = anomalousLotIds
@@ -450,6 +390,7 @@ fun CollectorDashboardScreen(
                     onSpeakPrice = { price -> viewModel.speakPrice(price, language) },
                     onSelectCategoryForLot = { cat ->
                         initialCategoryForLot = cat
+                        initialPhotoForLot = null
                         showCreateDialog = true
                     }
                 )
@@ -490,15 +431,6 @@ fun CollectorDashboardScreen(
                     language = language
                 )
             }
-
-            // Universal Voice Assistant FAB & Bar
-            if (viewModel.voiceEngine != null) {
-                com.example.ui.voice.GlobalVoiceAssistantBar(
-                    voiceEngine = viewModel.voiceEngine,
-                    currentLanguage = language,
-                    modifier = Modifier.align(Alignment.BottomCenter)
-                )
-            }
         }
     }
 
@@ -507,9 +439,18 @@ fun CollectorDashboardScreen(
         CreateLotDialog(
             viewModel = viewModel,
             initialCategory = initialCategoryForLot,
+            initialPhotoUri = initialPhotoForLot,
+            collectorLabel = if (collectorPhone.trimStart().startsWith("+")) {
+                collectorPhone.trim()
+            } else {
+                "+91 ${collectorPhone.trim()}"
+            },
             availableRecyclers = recyclers,
             language = language,
-            onDismiss = { showCreateDialog = false },
+            onDismiss = {
+                showCreateDialog = false
+                initialPhotoForLot = null
+            },
             onLotCreated = { category, subCategory, weightKg, condition, location, gpsCoordinates, matchedRecycler, paymentMode, draftLotId ->
                 viewModel.createNewLot(
                     category = category,
@@ -523,6 +464,7 @@ fun CollectorDashboardScreen(
                     draftLotId = draftLotId,
                     onCreated = { newLot ->
                         showCreateDialog = false
+                        initialPhotoForLot = null
                         viewModel.selectLot(newLot)
                     }
                 )
@@ -545,6 +487,27 @@ fun CollectorDashboardScreen(
     }
 }
 
+/**
+ * Persists a scanner-captured bitmap to the app cache so it can be attached to
+ * the Create Lot draft (never kept only in memory). Returns a content URI string
+ * via FileProvider, or null if the write failed.
+ */
+private fun saveBitmapToCache(context: android.content.Context, bitmap: Bitmap): String? {
+    return try {
+        val dir = File(context.cacheDir, "photo_cache").apply { mkdirs() }
+        val file = File(dir, "scan_${System.currentTimeMillis()}.jpg")
+        FileOutputStream(file).use { out ->
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+        }
+        androidx.core.content.FileProvider
+            .getUriForFile(context, "${context.packageName}.fileprovider", file)
+            .toString()
+    } catch (e: Exception) {
+        Log.e("CollectorDashboard", "Failed to persist scanned photo", e)
+        null
+    }
+}
+
 @Composable
 fun LotsOverviewTab(
     lots: List<MaterialLot>,
@@ -564,6 +527,7 @@ fun LotsOverviewTab(
     onSpeakSafetyItem: (HazardSafetyInfo) -> Unit,
     onNavigateToSafetyTab: () -> Unit,
     onSelectLot: (MaterialLot) -> Unit,
+    onScanEwaste: () -> Unit,
     onCreateLot: () -> Unit,
     anomalousLotIds: Set<String> = emptySet()
 ) {
@@ -573,6 +537,102 @@ fun LotsOverviewTab(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        // Primary Quick Actions: Scan E-Waste + Create Lot (kept clearly visible above the
+        // pinned global Voice Assistant bar so they are never overlapped at any screen size)
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MintLight),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MintBorder),
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onScanEwaste() }
+                        .testTag("scan_ewaste_action_btn")
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 16.dp, horizontal = 12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CameraAlt,
+                            contentDescription = "Scan E-Waste",
+                            tint = ForestGreenPrimary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = when (language) {
+                                Language.ENGLISH -> "Scan E-Waste"
+                                Language.HINDI -> "स्कैन करें"
+                                Language.MARATHI -> "स्कॅन करा"
+                            },
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = ForestGreenPrimary
+                        )
+                        Text(
+                            text = when (language) {
+                                Language.ENGLISH -> "AI camera valuation"
+                                Language.HINDI -> "AI कैमरा मूल्यांकन"
+                                Language.MARATHI -> "AI कॅमेरा मूल्यांकन"
+                            },
+                            fontSize = 10.sp,
+                            color = TextSecondaryMuted
+                        )
+                    }
+                }
+
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = ForestGreenPrimary),
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onCreateLot() }
+                        .testTag("create_lot_action_btn")
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 16.dp, horizontal = 12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Create Lot",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = when (language) {
+                                Language.ENGLISH -> "Create Lot"
+                                Language.HINDI -> "लॉट बनाएं"
+                                Language.MARATHI -> "लॉट तयार करा"
+                            },
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = Color.White
+                        )
+                        Text(
+                            text = when (language) {
+                                Language.ENGLISH -> "Log a new e-waste lot"
+                                Language.HINDI -> "नया लॉट दर्ज करें"
+                                Language.MARATHI -> "नवीन लॉट नोंदवा"
+                            },
+                            fontSize = 10.sp,
+                            color = Color.White.copy(alpha = 0.85f)
+                        )
+                    }
+                }
+            }
+        }
+
         // Today / This-Month Earnings Strip
         item {
             Row(

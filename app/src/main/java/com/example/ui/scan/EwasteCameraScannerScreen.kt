@@ -121,7 +121,7 @@ import java.nio.ByteBuffer
 fun EwasteCameraScannerScreen(
     language: Language,
     onBack: () -> Unit,
-    onAcceptLotToDashboard: ((EwasteScanResult) -> Unit)? = null,
+    onProceedToCreateLot: ((EwasteScanResult, Bitmap?) -> Unit)? = null,
     onSpeakText: ((String, Language) -> Unit)? = null
 ) {
     val context = LocalContext.current
@@ -294,183 +294,202 @@ fun EwasteCameraScannerScreen(
                 .background(Color.Black)
         ) {
             if (hasCameraPermission && capturedImages.isEmpty()) {
-                // Live CameraX Preview
-                AndroidView(
-                    factory = { ctx ->
-                        val previewView = PreviewView(ctx).apply {
-                            layoutParams = ViewGroup.LayoutParams(
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                                ViewGroup.LayoutParams.MATCH_PARENT
-                            )
-                        }
-
-                        val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
-                        cameraProviderFuture.addListener({
-                            val cameraProvider = cameraProviderFuture.get()
-
-                            val preview = Preview.Builder().build().also {
-                                it.setSurfaceProvider(previewView.surfaceProvider)
-                            }
-
-                            val capture = ImageCapture.Builder()
-                                .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
-                                .build()
-                            imageCapture = capture
-
-                            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-
-                            try {
-                                cameraProvider.unbindAll()
-                                cameraProvider.bindToLifecycle(
-                                    lifecycleOwner,
-                                    cameraSelector,
-                                    preview,
-                                    capture
-                                )
-                            } catch (exc: Exception) {
-                                // Camera binding failed
-                            }
-                        }, ContextCompat.getMainExecutor(ctx))
-
-                        previewView
-                    },
-                    modifier = Modifier.fillMaxSize().testTag("camerax_preview_view")
-                )
-
-                // Viewfinder Target Overlay
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    // ---- Camera Preview & Scan Controls Region (main focus, always above the Voice Assistant) ----
                     Box(
                         modifier = Modifier
-                            .size(280.dp)
-                            .border(2.dp, EmeraldAccent, RoundedCornerShape(24.dp))
-                            .drawBehind {
-                                val yOffset = size.height * laserY
-                                drawLine(
-                                    color = EmeraldAccent.copy(alpha = 0.9f),
-                                    start = Offset(10f, yOffset),
-                                    end = Offset(size.width - 10f, yOffset),
-                                    strokeWidth = 3.dp.toPx()
-                                )
-                            }
-                    )
-
-                    Text(
-                        text = when (language) {
-                            Language.ENGLISH -> "Point camera at circuit board, battery, phone or wires"
-                            Language.HINDI -> "कैमरे को ई-कचरे (सर्किट, बैटरी, फोन) के सामने रखें"
-                            Language.MARATHI -> "ई-कचऱ्यावर कॅमेरा रोखा"
-                        },
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        textAlign = TextAlign.Center,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = 132.dp)
-                            .background(Color.Black.copy(alpha = 0.65f), RoundedCornerShape(12.dp))
-                            .padding(horizontal = 14.dp, vertical = 8.dp)
-                    )
-                }
-
-                // Camera Controls Bar
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 32.dp, start = 24.dp, end = 24.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // "+" Add Multiple Photos from Gallery
-                    IconButton(
-                        onClick = { addPhotosLauncher.launch("image/*") },
-                        modifier = Modifier
-                            .size(58.dp)
-                            .clip(CircleShape)
-                            .background(ForestGreenPrimary)
-                            .border(2.dp, Color.White.copy(alpha = 0.7f), CircleShape)
-                            .testTag("btn_add_photos")
+                            .fillMaxWidth()
+                            .weight(1f)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "Add Multiple Photos",
-                            tint = Color.White,
-                            modifier = Modifier.size(28.dp)
-                        )
-                    }
+                        // Live CameraX Preview
+                        AndroidView(
+                            factory = { ctx ->
+                                val previewView = PreviewView(ctx).apply {
+                                    layoutParams = ViewGroup.LayoutParams(
+                                        ViewGroup.LayoutParams.MATCH_PARENT,
+                                        ViewGroup.LayoutParams.MATCH_PARENT
+                                    )
+                                }
 
-                    // Capture Shutter Button
-                    Surface(
-                        shape = CircleShape,
-                        color = ForestGreenPrimary,
-                        shadowElevation = 8.dp,
-                        modifier = Modifier
-                            .size(76.dp)
-                            .border(4.dp, Color.White, CircleShape)
-                            .clickable {
-                                val capture = imageCapture ?: return@clickable
-                                isAnalyzing = true
+                                val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
+                                cameraProviderFuture.addListener({
+                                    val cameraProvider = cameraProviderFuture.get()
 
-                                capture.takePicture(
-                                    ContextCompat.getMainExecutor(context),
-                                    object : ImageCapture.OnImageCapturedCallback() {
-                                        override fun onCaptureSuccess(image: ImageProxy) {
-                                            val bitmap = imageProxyToBitmap(image)
-                                            image.close()
-                                            val single = listOf(bitmap)
-                                            capturedImages = capturedImages + single
-
-                                            coroutineScope.launch {
-                                                val result = GeminiScannerClient.analyzeEwasteImage(bitmap, language)
-                                                result.onSuccess {
-                                                    scanResults = scanResults + it
-                                                }
-                                                isAnalyzing = false
-                                            }
-                                        }
-
-                                        override fun onError(exception: ImageCaptureException) {
-                                            isAnalyzing = false
-                                            Toast.makeText(context, "Failed to capture image", Toast.LENGTH_SHORT).show()
-                                        }
+                                    val preview = Preview.Builder().build().also {
+                                        it.setSurfaceProvider(previewView.surfaceProvider)
                                     }
+
+                                    val capture = ImageCapture.Builder()
+                                        .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                                        .build()
+                                    imageCapture = capture
+
+                                    val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+
+                                    try {
+                                        cameraProvider.unbindAll()
+                                        cameraProvider.bindToLifecycle(
+                                            lifecycleOwner,
+                                            cameraSelector,
+                                            preview,
+                                            capture
+                                        )
+                                    } catch (exc: Exception) {
+                                        // Camera binding failed
+                                    }
+                                }, ContextCompat.getMainExecutor(ctx))
+
+                                previewView
+                            },
+                            modifier = Modifier.fillMaxSize().testTag("camerax_preview_view")
+                        )
+
+                        // Viewfinder Target Overlay
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(32.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(280.dp)
+                                    .border(2.dp, EmeraldAccent, RoundedCornerShape(24.dp))
+                                    .drawBehind {
+                                        val yOffset = size.height * laserY
+                                        drawLine(
+                                            color = EmeraldAccent.copy(alpha = 0.9f),
+                                            start = Offset(10f, yOffset),
+                                            end = Offset(size.width - 10f, yOffset),
+                                            strokeWidth = 3.dp.toPx()
+                                        )
+                                    }
+                            )
+
+                            Text(
+                                text = when (language) {
+                                    Language.ENGLISH -> "Point camera at circuit board, battery, phone or wires"
+                                    Language.HINDI -> "कैमरे को ई-कचरे (सर्किट, बैटरी, फोन) के सामने रखें"
+                                    Language.MARATHI -> "ई-कचऱ्यावर कॅमेरा रोखा"
+                                },
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                textAlign = TextAlign.Center,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .padding(bottom = 128.dp)
+                                    .background(Color.Black.copy(alpha = 0.65f), RoundedCornerShape(12.dp))
+                                    .padding(horizontal = 14.dp, vertical = 8.dp)
+                            )
+                        }
+
+                        // Camera Controls Bar — fixed at bottom-center of the camera region,
+                        // never overlapped by the Voice Assistant docked below this region.
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 20.dp, start = 24.dp, end = 24.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // "+" Add Multiple Photos from Gallery
+                            IconButton(
+                                onClick = { addPhotosLauncher.launch("image/*") },
+                                modifier = Modifier
+                                    .size(58.dp)
+                                    .clip(CircleShape)
+                                    .background(ForestGreenPrimary)
+                                    .border(2.dp, Color.White.copy(alpha = 0.7f), CircleShape)
+                                    .testTag("btn_add_photos")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Add,
+                                    contentDescription = "Add Multiple Photos",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(28.dp)
                                 )
                             }
-                            .testTag("btn_shutter_capture")
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.CameraAlt,
-                                contentDescription = "Capture",
-                                tint = Color.White,
-                                modifier = Modifier.size(34.dp)
-                            )
+
+                            // Capture Shutter Button
+                            Surface(
+                                shape = CircleShape,
+                                color = ForestGreenPrimary,
+                                shadowElevation = 8.dp,
+                                modifier = Modifier
+                                    .size(76.dp)
+                                    .border(4.dp, Color.White, CircleShape)
+                                    .clickable {
+                                        val capture = imageCapture ?: return@clickable
+                                        isAnalyzing = true
+
+                                        capture.takePicture(
+                                            ContextCompat.getMainExecutor(context),
+                                            object : ImageCapture.OnImageCapturedCallback() {
+                                                override fun onCaptureSuccess(image: ImageProxy) {
+                                                    val bitmap = imageProxyToBitmap(image)
+                                                    image.close()
+                                                    val single = listOf(bitmap)
+                                                    capturedImages = capturedImages + single
+
+                                                    coroutineScope.launch {
+                                                        val result = GeminiScannerClient.analyzeEwasteImage(bitmap, language)
+                                                        result.onSuccess {
+                                                            scanResults = scanResults + it
+                                                        }
+                                                        isAnalyzing = false
+                                                    }
+                                                }
+
+                                                override fun onError(exception: ImageCaptureException) {
+                                                    isAnalyzing = false
+                                                    Toast.makeText(context, "Failed to capture image", Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
+                                        )
+                                    }
+                                    .testTag("btn_shutter_capture")
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.CameraAlt,
+                                        contentDescription = "Capture",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(34.dp)
+                                    )
+                                }
+                            }
+
+                            // Quick Reminder Notification Trigger
+                            IconButton(
+                                onClick = {
+                                    requestSchedule(ReminderType.NEARBY_COLLECTION_DRIVE)
+                                },
+                                modifier = Modifier
+                                    .size(54.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.White.copy(alpha = 0.25f))
+                                    .testTag("btn_schedule_reminder_quick")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.NotificationsActive,
+                                    contentDescription = "Set Collection Reminder",
+                                    tint = WarningAmber,
+                                    modifier = Modifier.size(26.dp)
+                                )
+                            }
                         }
                     }
 
-                    // Quick Reminder Notification Trigger
-                    IconButton(
-                        onClick = {
-                            requestSchedule(ReminderType.NEARBY_COLLECTION_DRIVE)
-                        },
+                    // ---- Fixed Bottom Action Area (reserved exclusively for the single Voice Assistant) ----
+                    // The app-wide "Ask AI E-Waste Assistant" bar docks here, BELOW every camera control.
+                    Box(
                         modifier = Modifier
-                            .size(54.dp)
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.25f))
-                            .testTag("btn_schedule_reminder_quick")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.NotificationsActive,
-                            contentDescription = "Set Collection Reminder",
-                            tint = WarningAmber,
-                            modifier = Modifier.size(26.dp)
-                        )
-                    }
+                            .fillMaxWidth()
+                            .height(136.dp)
+                            .background(Color.Black.copy(alpha = 0.55f))
+                    ) {}
                 }
             } else if (!hasCameraPermission) {
                 // Permission Request Fallback UI
@@ -513,6 +532,8 @@ fun EwasteCameraScannerScreen(
                     ) {
                         Text("Pick Images from Gallery Instead")
                     }
+                    // Bottom clearance so the docked Voice Assistant never covers these actions
+                    Spacer(modifier = Modifier.height(150.dp))
                 }
             }
 
@@ -704,12 +725,18 @@ fun EwasteCameraScannerScreen(
                                     )
                                 },
                                 onAddToLots = {
-                                    onAcceptLotToDashboard?.invoke(res)
+                                    // Hand the identified item to the Create Lot flow so the
+                                    // collector must confirm the weight and explicitly create
+                                    // the record. Never auto-create a lot from the AI estimate.
+                                    onProceedToCreateLot?.invoke(res, capturedImages.getOrNull(idx))
                                     onBack()
                                 }
                             )
                             Spacer(modifier = Modifier.height(14.dp))
                         }
+
+                        // Bottom clearance so the docked Voice Assistant never covers the last result card
+                        Spacer(modifier = Modifier.height(150.dp))
                     }
                 }
             }

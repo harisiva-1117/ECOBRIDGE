@@ -12,10 +12,12 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
@@ -26,10 +28,15 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -124,6 +131,7 @@ import kotlin.math.sin
  * Allows informal collectors, recyclers, and citizens to ask natural language questions
  * regarding e-waste disposal, hazardous material segregation, and CPCB 2022 guidelines.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun GlobalVoiceAssistantBar(
     voiceEngine: VoiceEngine,
@@ -195,10 +203,13 @@ fun GlobalVoiceAssistantBar(
         label = "scale"
     )
 
+    val isImeVisible = WindowInsets.isImeVisible
+
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .imePadding()
+            .padding(horizontal = 16.dp, vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // 1. Pending Confirmation Card (Destructive Actions)
@@ -270,13 +281,44 @@ fun GlobalVoiceAssistantBar(
         }
 
         // 2. Main E-Waste Voice Floating Action Button (FAB)
-        EwasteVoiceAssistantFab(
-            voiceState = voiceState,
-            pulseScale = pulseScale,
-            onClick = { handleVoiceFabClick() },
-            onOpenTypeDialog = { showTextInputDialog = true },
-            modifier = Modifier.fillMaxWidth()
-        )
+        //    While the software keyboard is open the full-width pill would overlap the
+        //    focused input / bottom buttons, so it collapses to a compact mic FAB that
+        //    floats above the keyboard.
+        AnimatedVisibility(
+            visible = !isImeVisible,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically()
+        ) {
+            EwasteVoiceAssistantFab(
+                voiceState = voiceState,
+                pulseScale = pulseScale,
+                onClick = { handleVoiceFabClick() },
+                onOpenTypeDialog = { showTextInputDialog = true },
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        AnimatedVisibility(
+            visible = isImeVisible,
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            FloatingActionButton(
+                onClick = { handleVoiceFabClick() },
+                shape = CircleShape,
+                containerColor = ForestGreenPrimary,
+                contentColor = Color.White,
+                modifier = Modifier
+                    .size(52.dp)
+                    .testTag("voice_assistant_minimized_fab")
+            ) {
+                Icon(
+                    imageVector = if (voiceState == VoiceState.LISTENING) Icons.Default.Stop else Icons.Default.Mic,
+                    contentDescription = "Voice Assistant",
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        }
     }
 
     // Modal Voice Recording State Sheet (Active audio recording, waveform & disposal answers)
@@ -366,7 +408,7 @@ fun EwasteVoiceAssistantFab(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+                .padding(horizontal = 14.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -381,7 +423,7 @@ fun EwasteVoiceAssistantFab(
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .size(46.dp)
+                        .size(40.dp)
                         .clip(CircleShape)
                         .background(
                             if (isListening) Color(0xFFEF4444) else EmeraldAccent
@@ -392,11 +434,11 @@ fun EwasteVoiceAssistantFab(
                         imageVector = if (isListening) Icons.Default.Stop else Icons.Default.Mic,
                         contentDescription = "Voice Recording Assistant",
                         tint = Color.White,
-                        modifier = Modifier.size(26.dp)
+                        modifier = Modifier.size(22.dp)
                     )
                 }
 
-                Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(10.dp))
 
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -415,7 +457,7 @@ fun EwasteVoiceAssistantFab(
                                 isProcessing -> "AI Analyzing Query..."
                                 else -> "Ask AI E-Waste Assistant"
                             },
-                            fontSize = 14.sp,
+                            fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White,
                             maxLines = 1,
@@ -424,7 +466,7 @@ fun EwasteVoiceAssistantFab(
                     }
                     Text(
                         text = if (isListening) "Speak your e-waste disposal question" else "Voice queries on disposal, prices, & CPCB rules",
-                        fontSize = 11.sp,
+                        fontSize = 10.sp,
                         color = Color.White.copy(alpha = 0.85f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -436,7 +478,7 @@ fun EwasteVoiceAssistantFab(
             IconButton(
                 onClick = onOpenTypeDialog,
                 modifier = Modifier
-                    .size(38.dp)
+                    .size(34.dp)
                     .clip(CircleShape)
                     .background(Color.White.copy(alpha = 0.15f))
                     .testTag("voice_assistant_type_query_button")
@@ -445,7 +487,7 @@ fun EwasteVoiceAssistantFab(
                     imageVector = Icons.Default.Keyboard,
                     contentDescription = "Type E-Waste Query",
                     tint = Color.White,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(18.dp)
                 )
             }
         }

@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.auth.SupabaseAuthService
 import com.example.i18n.LanguageManager
 import com.example.model.Language
 import com.example.model.RoleType
@@ -50,6 +51,15 @@ class IntroViewModel(application: Application) : AndroidViewModel(application) {
     val lastIntentResult = voiceEngine.lastIntentResult
 
     init {
+        // Restore the last authenticated role from the persisted session so that
+        // returning from an external activity (system camera / photo picker) or an
+        // activity/process restart lands the user back on their dashboard instead
+        // of dropping them to the intro screen. An explicit sign-out clears the
+        // stored session, so this never re-opens a role after logging out.
+        SupabaseAuthService.getInstance(application).authenticatedUser.value?.let { user ->
+            _navigationDestination.value = user.role
+        }
+
         viewModelScope.launch {
             networkMonitor.isOnline.collect { online ->
                 _isOnline.value = online
@@ -93,6 +103,7 @@ class IntroViewModel(application: Application) : AndroidViewModel(application) {
             setLanguage(lang)
         }
         voiceEngine.router.onSignOut = {
+            SupabaseAuthService.getInstance(getApplication()).signOut()
             _navigationDestination.value = null
         }
 

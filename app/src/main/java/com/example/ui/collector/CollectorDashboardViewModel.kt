@@ -17,6 +17,8 @@ import com.example.data.ConnectionRequestEntity
 import com.example.data.EwasteDatabase
 import com.example.data.EwasteRepository
 import com.example.data.LotPhotoEntity
+import com.example.data.toCollectorLotDto
+import com.example.data.toEntity
 import com.example.data.QuotationEntity
 import com.example.data.TransactionLedgerEntity
 import com.example.model.AuthorizedRecycler
@@ -175,16 +177,57 @@ class CollectorDashboardViewModel(
         )
         unitEconomics = repository.getUnitEconomics()
 
-        // Trigger initial populate if DB was already opened
+        // Pull the shared Supabase source of truth into the local cache.
+        refreshFromCloud()
+    }
+
+    /**
+     * Single synchronisation point for the collector role. Pulls the
+     * authoritative records from Supabase (role view `v_collector_my_lots` /
+     * `v_collector_my_transactions`) plus the shared reference tables, and
+     * mirrors them into the local Room cache. Every dashboard flow reads Room,
+     * so a change made by the recycler surfaces here after a pull.
+     */
+    fun refreshFromCloud() {
         viewModelScope.launch {
-            EwasteDatabase.populateInitialDatabase(
-                database.priceDao(),
-                database.recyclerDao(),
-                database.materialLotDao(),
-                database.transactionLedgerDao(),
-                database.safetyGuidelineDao()
-            )
+            val userId = currentUserId()
+            if (userId.isBlank()) return@launch
+            val database = EwasteDatabase.getDatabase(getApplication(), viewModelScope)
+
+            runCatching {
+                CloudSyncManager.fetchCollectorLots(userId).forEach {
+                    database.materialLotDao().insertLot(it.toEntity())
+                }
+            }
+            runCatching {
+                CloudSyncManager.fetchCollectorTransactions(userId).forEach {
+                    database.transactionLedgerDao().insertTransaction(it.toEntity())
+                }
+            }
+            runCatching {
+                val prices = CloudSyncManager.fetchMaterialPrices()
+                if (prices.isNotEmpty()) database.priceDao().insertPrices(prices.map { it.toEntity() })
+            }
+            runCatching {
+                val guides = CloudSyncManager.fetchSafetyGuidelines()
+                if (guides.isNotEmpty()) database.safetyGuidelineDao().insertGuidelines(guides.map { it.toEntity() })
+            }
+            runCatching {
+                val recyclers = CloudSyncManager.fetchAuthorizedRecyclers()
+                if (recyclers.isNotEmpty()) database.recyclerDao().insertRecyclers(recyclers.map { it.toEntity() })
+            }
+            _lastSyncTimestamp.value = System.currentTimeMillis()
         }
+    }
+
+    private val _isCreatingLot = MutableStateFlow(false)
+    val isCreatingLot: StateFlow<Boolean> = _isCreatingLot.asStateFlow()
+
+    private val _createError = MutableStateFlow<String?>(null)
+    val createError: StateFlow<String?> = _createError.asStateFlow()
+
+    fun clearCreateError() {
+        _createError.value = null
     }
 
     fun createNewLot(
@@ -199,27 +242,52 @@ class CollectorDashboardViewModel(
         draftLotId: String? = null,
         onCreated: (MaterialLot) -> Unit = {}
     ) {
+        // Idempotent guard: repeated taps must never create duplicate lot records.
+        if (_isCreatingLot.value) return
+        if (weightKg <= 0.0 || weightKg.isNaN() || weightKg.isInfinite()) {
+            _createError.value = "Enter a valid weight greater than 0 kg before creating the lot."
+            return
+        }
+        _isCreatingLot.value = true
+        _createError.value = null
         viewModelScope.launch {
-            val newLot = repository.createLot(
-                category = category,
-                subCategory = subCategory,
-                weightKg = weightKg,
-                condition = condition,
-                location = location,
-                gpsCoordinates = gpsCoordinates,
-                matchedRecycler = matchedRecycler,
-                paymentMode = paymentMode,
-                isOffline = _isOfflineMode.value
-            )
-            if (draftLotId != null) {
-                repository.attachDraftPhotosToLot(draftLotId, newLot.lotId)
+            try {
+                val newLot = repository.createLot(
+                    category = category,
+                    subCategory = subCategory,
+                    weightKg = weightKg,
+                    condition = condition,
+                    location = location,
+                    gpsCoordinates = gpsCoordinates,
+                    matchedRecycler = matchedRecycler,
+                    paymentMode = paymentMode,
+                    isOffline = _isOfflineMode.value
+                )
+                if (draftLotId != null) {
+                    repository.attachDraftPhotosToLot(draftLotId, newLot.lotId)
+                }
+                // Push the new record to the shared Supabase source of truth so the
+                // formal recycler and government admin observe the same row. Offline
+                // creates stay local with isSynced=false until connectivity returns.
+                if (!_isOfflineMode.value) {
+                    val uid = currentUserId()
+                    if (uid.isNotBlank()) {
+                        runCatching { CloudSyncManager.upsertLot(newLot.toCollectorLotDto(uid)) }
+                            .onFailure { Log.w(TAG, "Cloud push deferred (offline/error): ${it.message}") }
+                    }
+                }
+                endCreationSession()
+                addAuditLog(
+                    action = "LOT_CREATED",
+                    detailJson = "{\"lotId\":\"${newLot.lotId}\",\"category\":\"${category.name}\",\"weightKg\":$weightKg}"
+                )
+                onCreated(newLot)
+            } catch (e: Exception) {
+                Log.e(TAG, "Lot creation failed", e)
+                _createError.value = "Could not create lot: ${e.message ?: "unexpected error"}. Your draft is kept."
+            } finally {
+                _isCreatingLot.value = false
             }
-            endCreationSession()
-            addAuditLog(
-                action = "LOT_CREATED",
-                detailJson = "{\"lotId\":\"${newLot.lotId}\",\"category\":\"${category.name}\",\"weightKg\":$weightKg}"
-            )
-            onCreated(newLot)
         }
     }
 
@@ -278,6 +346,9 @@ class CollectorDashboardViewModel(
                     Log.i(TAG, "Cloud sync pushed ${outcome.lotsPushed} lots, ${outcome.transactionsPushed} transactions")
                 }
                 _lastSyncTimestamp.value = System.currentTimeMillis()
+                // Re-read the shared source of truth so recycler-side changes to
+                // this collector's records surface (real-time refetch sync).
+                refreshFromCloud()
             } finally {
                 _isSyncing.value = false
             }
@@ -326,7 +397,8 @@ class CollectorDashboardViewModel(
         _aiUnavailableReason.value = null
     }
 
-    fun addDraftPhoto(localUri: String) {
+    fun addDraftPhoto(localUri: String, onAdded: (String) -> Unit = {}) {
+        if (localUri.isBlank()) return
         viewModelScope.launch {
             val userId = currentUserId()
             val sessionDraftId = _draftLotId.value ?: run {
@@ -345,11 +417,30 @@ class CollectorDashboardViewModel(
                 createdAt = System.currentTimeMillis()
             )
             repository.insertDraftPhoto(photo)
+            onAdded(photo.photoId)
         }
     }
 
     fun removeDraftPhoto(photoId: String) {
+        if (photoId.isBlank()) return
         viewModelScope.launch { repository.removePhoto(photoId) }
+    }
+
+    /** Analyzes exactly one captured draft photo (never fabricates a result). */
+    fun analyzeDraftPhoto(photoId: String, categoryHint: MaterialCategory, language: Language) {
+        if (photoId.isBlank()) return
+        viewModelScope.launch {
+            val photo = EwasteDatabase.getDatabase(getApplication(), viewModelScope)
+                .lotPhotoDao().getPhotoById(photoId)
+            val bitmap = photo?.let { loadBitmap(getApplication(), it.localUri) }
+            if (bitmap == null) {
+                _aiAnalysis.value = null
+                _aiUnavailableReason.value =
+                    "AI identification unavailable. Please select the e-waste category manually."
+                return@launch
+            }
+            analyzePhotos(listOf(bitmap), language, categoryHint)
+        }
     }
 
     fun analyzePhotos(bitmaps: List<Bitmap>, language: Language, categoryHint: MaterialCategory?) {
@@ -508,6 +599,7 @@ class CollectorDashboardViewModel(
     fun refreshWorkbench() {
         refreshConnections()
         refreshQuotations()
+        refreshFromCloud()
         viewModelScope.launch {
             _location.value = repository.collectorLocationNow(currentUserId())
         }

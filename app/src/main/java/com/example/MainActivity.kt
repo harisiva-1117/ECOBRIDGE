@@ -7,6 +7,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -14,7 +15,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.auth.SupabaseAuthService
 import com.example.model.AppScreen
 import com.example.model.RoleType
 import com.example.ui.FormalRecyclerAuthScreen
@@ -43,6 +46,7 @@ fun MainAppNavHost(
 ) {
     val currentDestination by viewModel.navigationDestination.collectAsState()
     val currentLanguage by viewModel.selectedLanguage.collectAsState()
+    val context = LocalContext.current
 
     // Sync active screen with centralized VoiceIntentRouter
     LaunchedEffect(currentDestination) {
@@ -55,8 +59,12 @@ fun MainAppNavHost(
         viewModel.voiceEngine.router.updateScreen(screen, currentDestination)
     }
 
-    // Handle system back navigation when in role authentication
+    // Handle system back navigation when in role authentication.
+    // The authenticated session is fully cleared so returning to the portal
+    // chooser never re-opens the previous role's dashboard and no session state
+    // leaks across roles.
     BackHandler(enabled = currentDestination != null) {
+        SupabaseAuthService.getInstance(context).signOut()
         viewModel.navigateBackToIntro()
     }
 
@@ -98,6 +106,7 @@ fun MainAppNavHost(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
+                .imePadding()
         )
     }
 }
