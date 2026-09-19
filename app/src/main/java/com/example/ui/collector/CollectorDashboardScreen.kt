@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,6 +26,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.CurrencyRupee
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
@@ -45,7 +55,8 @@ import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -59,6 +70,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -74,6 +86,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.CloudSyncManager.RemoteCollector
@@ -90,7 +103,20 @@ import com.example.model.MaterialLot
 import com.example.model.PaymentMode
 import com.example.ui.map.MapCollectionPointsScreen
 import com.example.ui.scan.EwasteCameraScannerScreen
+import com.example.ui.voice.BottomsFloatingDockInset
 import com.example.ui.theme.BackgroundCream
+import com.example.ui.theme.EcoBlueAccent
+import com.example.ui.theme.EcoBlueBg
+import com.example.ui.theme.EcoBorder
+import com.example.ui.theme.EcoGreenBright
+import com.example.ui.theme.EcoGreenDeep
+import com.example.ui.theme.EcoGreenPrimary
+import com.example.ui.theme.EcoMint
+import com.example.ui.theme.EcoOrangeAccent
+import com.example.ui.theme.EcoOrangeBg
+import com.example.ui.theme.EcoTextPrimary
+import com.example.ui.theme.EcoTextSecondary
+import com.example.ui.theme.EcoWhite
 import com.example.ui.theme.EmeraldAccent
 import com.example.ui.theme.ErrorRed
 import com.example.ui.theme.ForestGreenDark
@@ -138,9 +164,35 @@ fun CollectorDashboardScreen(
     val selectedLot by viewModel.selectedLotForDetail.collectAsState()
     val anomalousLotIds by viewModel.anomalousLotIds.collectAsState()
 
-    var activeTab by remember { mutableIntStateOf(0) } // 0: Lots, 1: Rates, 2: Recyclers, 3: Safety, 4: Ledger & Economics
+    var activeTab by remember { mutableIntStateOf(0) } // 0: Home, 1: My Lots, 2: Recyclers (voice), 3: Connect (voice), 4: Safety (voice), 5: Earnings, 6: Profile
+
+    // This screen has a bottom navigation bar; lift the global voice dock above
+    // it so the bottom bar stays fully tappable (dock returns to the very bottom
+    // on every screen without a bottom bar).
+    DisposableEffect(Unit) {
+        BottomsFloatingDockInset.height.value = 84.dp
+        onDispose {
+            BottomsFloatingDockInset.height.value = 0.dp
+        }
+    }
     var showMapView by remember { mutableStateOf(false) }
     var showScannerView by remember { mutableStateOf(false) }
+    // Header notification menu
+    var showNotifications by remember { mutableStateOf(false) }
+    // "Filter Lots" state shared by the Home tab preview and the My Lots tab.
+    var statusFilter by remember { mutableStateOf<String?>(null) }
+    var categoryFilter by remember { mutableStateOf<String?>(null) }
+    var sortNewestFirst by remember { mutableStateOf(true) }
+
+    // Apply All Status / All Categories / Date filters to the live lot list.
+    val filteredLots = remember(lots, statusFilter, categoryFilter, sortNewestFirst) {
+        val base = lots
+            .filter { statusFilter == null || it.status.name == statusFilter }
+            .filter { categoryFilter == null || it.category.name == categoryFilter }
+            .sortedByDescending { it.collectionTimestamp }
+        if (sortNewestFirst) base else base.reversed()
+    }
+    val hasActiveFilters = statusFilter != null || categoryFilter != null || !sortNewestFirst
     // Persisted across activity recreation (e.g. returning from the system
     // camera / photo picker) so an in-progress Create Lot draft is not lost.
     var showCreateDialog by rememberSaveable { mutableStateOf(false) }
@@ -215,102 +267,155 @@ fun CollectorDashboardScreen(
 
     Scaffold(
         topBar = {
-            CenterAlignedTopAppBar(
-                title = {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = when (language) {
-                                Language.ENGLISH -> "E-Waste Collector Hub"
-                                Language.HINDI -> "ई-कचरा संग्राहक केंद्र"
-                                Language.MARATHI -> "ई-कचरा संकलक केंद्र"
-                            },
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp,
-                            color = ForestGreenPrimary
-                        )
-                        Text(
-                            text = "+91 $collectorPhone • CPCB Verified",
-                            fontSize = 11.sp,
-                            color = ForestGreenDark
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(
-                        onClick = onBack,
-                        modifier = Modifier.testTag("collector_nav_back")
+            // ECOBRIDGES collector header: title + subtitle | online/offline status | bell.
+            // statusBarsPadding() keeps every header element below the Android system
+            // status bar (edge-to-edge safe-area handling) without hard-coded margins.
+            Surface(
+                color = EcoWhite,
+                tonalElevation = 1.dp
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(horizontal = 8.dp, vertical = 8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = ForestGreenPrimary
-                        )
-                    }
-                },
-                actions = {
-                    // AI Camera E-Waste Scanner Button
-                    IconButton(
-                        onClick = { showScannerView = true },
-                        modifier = Modifier.testTag("open_camera_scanner_btn")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.CameraAlt,
-                            contentDescription = "AI Camera E-Waste Scanner",
-                            tint = ForestGreenPrimary
-                        )
-                    }
-
-                    // Map View Icon Button
-                    IconButton(
-                        onClick = { showMapView = true },
-                        modifier = Modifier.testTag("open_map_view_btn")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.LocationOn,
-                            contentDescription = "Map of Collection Points",
-                            tint = ForestGreenPrimary
-                        )
-                    }
-
-                    // Offline / Online Sync Indicator & Manual Sync Toggle Button
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = if (isOffline) WarningAmber.copy(alpha = 0.2f) else if (unsyncedCount > 0) WarningAmber.copy(alpha = 0.15f) else MintLight,
-                        modifier = Modifier
-                            .padding(end = 8.dp)
-                            .clickable {
-                                if (isOffline) {
-                                    viewModel.toggleOfflineSimulation()
-                                } else {
-                                    viewModel.manualSync()
-                                }
-                            }
-                            .testTag("toggle_offline_btn")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                        IconButton(
+                            onClick = onBack,
+                            modifier = Modifier.testTag("collector_nav_back")
                         ) {
                             Icon(
-                                imageVector = if (isOffline) Icons.Default.CloudOff else Icons.Default.CloudDone,
-                                contentDescription = null,
-                                tint = if (isOffline) WarningAmber else SuccessGreen,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = if (isSyncing) "Syncing..." else if (isOffline) "Offline" else if (unsyncedCount > 0) "$unsyncedCount Queued" else "Synced",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = if (isOffline) WarningAmber else SuccessGreen
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back",
+                                tint = EcoTextSecondary
                             )
                         }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = when (language) {
+                                    Language.ENGLISH -> "E-Waste Collector Hub"
+                                    Language.HINDI -> "ई-कचरा संग्राहक केंद्र"
+                                    Language.MARATHI -> "ई-कचरा संकलक केंद्र"
+                                },
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 17.sp,
+                                color = EcoTextPrimary
+                            )
+                            Text(
+                                text = when (language) {
+                                    Language.ENGLISH -> "Collect • Segregate • Recycle"
+                                    Language.HINDI -> "संग्रह करें • अलग करें • रीसायकल करें"
+                                    Language.MARATHI -> "संकलन करा • वर्गीकरण करा • रीसायकल करा"
+                                },
+                                fontSize = 11.sp,
+                                color = EcoTextSecondary
+                            )
+                        }
+
+                        // Online / Offline status pill (keeps existing toggle behaviour)
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = if (isOffline) WarningAmber.copy(alpha = 0.18f)
+                            else if (unsyncedCount > 0) WarningAmber.copy(alpha = 0.12f)
+                            else SuccessGreen.copy(alpha = 0.15f),
+                            modifier = Modifier
+                                .clickable {
+                                    if (isOffline) {
+                                        viewModel.toggleOfflineSimulation()
+                                    } else {
+                                        viewModel.manualSync()
+                                    }
+                                }
+                                .testTag("toggle_offline_btn")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = if (isOffline) Icons.Default.CloudOff else Icons.Default.CloudDone,
+                                    contentDescription = null,
+                                    tint = if (isOffline) WarningAmber else SuccessGreen,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = if (isSyncing) "Syncing..."
+                                    else if (isOffline) "Offline"
+                                    else if (unsyncedCount > 0) "$unsyncedCount Queued"
+                                    else "Online",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isOffline) WarningAmber else SuccessGreen
+                                )
+                            }
+                        }
+
+                        // Notifications bell with live (non-fabricated) status dot.
+                        Box {
+                            IconButton(onClick = { showNotifications = true }) {
+                                Icon(
+                                    imageVector = Icons.Default.Notifications,
+                                    contentDescription = "Notifications",
+                                    tint = if (pendingDues > 0 || unsyncedCount > 0) EcoTextPrimary else EcoTextSecondary
+                                )
+                            }
+                            if (pendingDues > 0 || unsyncedCount > 0) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(top = 6.dp, end = 6.dp)
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(EcoOrangeAccent)
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = showNotifications,
+                                onDismissRequest = { showNotifications = false }
+                            ) {
+                                Text(
+                                    text = when (language) {
+                                        Language.ENGLISH -> "Notifications"
+                                        Language.HINDI -> "सूचनाएं"
+                                        Language.MARATHI -> "सूचना"
+                                    },
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = EcoTextPrimary,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                                )
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = if (pendingDues > 0)
+                                                "₹${pendingDues.toInt()} pending on weigh-in"
+                                            else "No pending payouts",
+                                            fontSize = 13.sp
+                                        )
+                                    },
+                                    onClick = { showNotifications = false }
+                                )
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = if (unsyncedCount > 0)
+                                                "$unsyncedCount changes queued for CPCB sync"
+                                            else "All records synced with CPCB",
+                                            fontSize = 13.sp
+                                        )
+                                    },
+                                    onClick = { showNotifications = false }
+                                )
+                            }
+                        }
                     }
-                },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                    containerColor = Color.White
-                )
-            )
+                }
+            }
         },
         bottomBar = {
             NavigationBar(
@@ -318,32 +423,36 @@ fun CollectorDashboardScreen(
                 tonalElevation = 6.dp
             ) {
                 val navItems = listOf(
-                    Triple("Lots", "📦", 0),
-                    Triple("Prices", "📈", 1),
-                    Triple("Recyclers", "🏭", 2),
-                    Triple("Connect", "🤝", 3),
-                    Triple("Safety", "🛡️", 4),
-                    Triple("Ledger", "💰", 5)
+                    Triple("Home", Icons.Default.Home, 0),
+                    Triple("My Lots", Icons.Default.Inventory2, 1),
+                    Triple("Earnings", Icons.Default.CurrencyRupee, 5),
+                    Triple("Profile", Icons.Default.Person, 6)
                 )
-                for ((label, iconEmoji, index) in navItems) {
+                for ((label, icon, index) in navItems) {
                     val isSelected = activeTab == index
                     NavigationBarItem(
                         selected = isSelected,
                         onClick = { activeTab = index },
                         icon = {
-                            Text(text = iconEmoji, fontSize = if (isSelected) 20.sp else 16.sp)
+                            Icon(
+                                imageVector = icon,
+                                contentDescription = label,
+                                modifier = Modifier.size(24.dp),
+                                tint = if (isSelected) EcoGreenPrimary else EcoTextSecondary
+                            )
                         },
                         label = {
                             Text(
                                 text = label,
                                 fontSize = 11.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isSelected) EcoGreenPrimary else EcoTextSecondary
                             )
                         },
                         colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = ForestGreenPrimary,
-                            selectedTextColor = ForestGreenPrimary,
-                            indicatorColor = MintLight
+                            selectedIconColor = EcoGreenPrimary,
+                            selectedTextColor = EcoGreenPrimary,
+                            indicatorColor = EcoMint
                         ),
                         modifier = Modifier.testTag("nav_tab_$index")
                     )
@@ -358,40 +467,56 @@ fun CollectorDashboardScreen(
                 .padding(paddingValues)
         ) {
             when (activeTab) {
-                0 -> LotsOverviewTab(
-                    lots = lots,
-                    totalSettled = totalSettled,
-                    pendingDues = pendingDues,
+                0 -> HomeTab(
+                    lots = filteredLots,
+                    recyclers = recyclers,
                     todaySettled = todaySettled,
                     monthSettled = monthSettled,
+                    totalSettled = totalSettled,
+                    pendingDues = pendingDues,
                     isOffline = isOffline,
                     isSyncing = isSyncing,
                     unsyncedCount = unsyncedCount,
                     lastSyncTimestamp = lastSyncTimestamp,
-                    safetyItems = safetyGuidanceList,
                     language = language,
                     onToggleOffline = { viewModel.toggleOfflineSimulation() },
                     onManualSync = { viewModel.manualSync() },
-                    onSpeakAllSafety = { viewModel.speakAllSafetyGuidelines(language) },
-                    onSpeakSafetyItem = { item -> viewModel.speakSafety(item, language) },
-                    onNavigateToSafetyTab = { activeTab = 4 },
                     onSelectLot = { lot -> viewModel.selectLot(lot) },
                     onScanEwaste = { showScannerView = true },
-                    onCreateLot = {
-                        initialCategoryForLot = null
-                        initialPhotoForLot = null
-                        showCreateDialog = true
-                    },
-                    anomalousLotIds = anomalousLotIds
+                    onOpenRecyclers = { activeTab = 2 },
+                    onOpenMap = { showMapView = true },
+                    onStartAssistant = { viewModel.voiceEngine?.startListening(language) },
+                    anomalousLotIds = anomalousLotIds,
+                    hasActiveFilters = hasActiveFilters,
+                    statusFilter = statusFilter,
+                    categoryFilter = categoryFilter,
+                    sortNewestFirst = sortNewestFirst,
+                    onStatusFilter = { statusFilter = it },
+                    onCategoryFilter = { categoryFilter = it },
+                    onSortChange = { sortNewestFirst = it },
+                    onClearFilters = {
+                        statusFilter = null
+                        categoryFilter = null
+                        sortNewestFirst = true
+                    }
                 )
-                1 -> PriceBoardSection(
-                    prices = prices,
+                1 -> MyLotsTab(
+                    lots = filteredLots,
                     language = language,
-                    onSpeakPrice = { price -> viewModel.speakPrice(price, language) },
-                    onSelectCategoryForLot = { cat ->
-                        initialCategoryForLot = cat
-                        initialPhotoForLot = null
-                        showCreateDialog = true
+                    onSelectLot = { lot -> viewModel.selectLot(lot) },
+                    onScanEwaste = { showScannerView = true },
+                    anomalousLotIds = anomalousLotIds,
+                    hasActiveFilters = hasActiveFilters,
+                    statusFilter = statusFilter,
+                    categoryFilter = categoryFilter,
+                    sortNewestFirst = sortNewestFirst,
+                    onStatusFilter = { statusFilter = it },
+                    onCategoryFilter = { categoryFilter = it },
+                    onSortChange = { sortNewestFirst = it },
+                    onClearFilters = {
+                        statusFilter = null
+                        categoryFilter = null
+                        sortNewestFirst = true
                     }
                 )
                 2 -> RecyclersTab(
@@ -429,6 +554,25 @@ fun CollectorDashboardScreen(
                     pendingDues = pendingDues,
                     economicsList = viewModel.unitEconomics,
                     language = language
+                )
+                6 -> CollectorProfileTab(
+                    collectorPhone = collectorPhone,
+                    collectorLocation = collectorLocation,
+                    isOffline = isOffline,
+                    isSyncing = isSyncing,
+                    unsyncedCount = unsyncedCount,
+                    lastSyncTimestamp = lastSyncTimestamp,
+                    language = language,
+                    onToggleOffline = { viewModel.toggleOfflineSimulation() },
+                    onManualSync = { viewModel.manualSync() },
+                    onOpenSafety = { activeTab = 4 },
+                    onSignOut = onBack,
+                    onOpenLots = { activeTab = 1 },
+                    onCreateLot = {
+                        initialCategoryForLot = null
+                        initialPhotoForLot = null
+                        showCreateDialog = true
+                    }
                 )
             }
         }
@@ -505,6 +649,1365 @@ private fun saveBitmapToCache(context: android.content.Context, bitmap: Bitmap):
     } catch (e: Exception) {
         Log.e("CollectorDashboard", "Failed to persist scanned photo", e)
         null
+    }
+}
+
+// ===========================================================================
+// ECOBRIDGES Collector Home — spec order: header (Scaffold top bar) -> 2x2
+// stat cards -> Scan E-Waste -> CPCB Sync -> Nearby Recyclers -> Filter Lots
+// -> Active & Completed Digital Lots -> AI Voice Assistant (bottom bar stays on
+// the Scaffold). All numbers come from the live Room ledger; no fabricated
+// figures.
+// ===========================================================================
+@Composable
+fun HomeTab(
+    lots: List<MaterialLot>,
+    recyclers: List<AuthorizedRecycler>,
+    todaySettled: Double,
+    monthSettled: Double,
+    totalSettled: Double,
+    pendingDues: Double,
+    isOffline: Boolean,
+    isSyncing: Boolean,
+    unsyncedCount: Int,
+    lastSyncTimestamp: Long,
+    language: Language,
+    onToggleOffline: () -> Unit,
+    onManualSync: () -> Unit,
+    onSelectLot: (MaterialLot) -> Unit,
+    onScanEwaste: () -> Unit,
+    onOpenRecyclers: () -> Unit,
+    onOpenMap: () -> Unit,
+    onStartAssistant: () -> Unit,
+    anomalousLotIds: Set<String>,
+    hasActiveFilters: Boolean,
+    statusFilter: String?,
+    categoryFilter: String?,
+    sortNewestFirst: Boolean,
+    onStatusFilter: (String?) -> Unit,
+    onCategoryFilter: (String?) -> Unit,
+    onSortChange: (Boolean) -> Unit,
+    onClearFilters: () -> Unit
+) {
+    val activeLots = lots.count {
+        it.status == LotStatus.MATCHED ||
+            it.status == LotStatus.HANDOVER_PENDING ||
+            it.status == LotStatus.VALUATED
+    }
+
+    val calendarToday = java.util.Calendar.getInstance().apply {
+        set(java.util.Calendar.HOUR_OF_DAY, 0)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+    }
+    val startOfToday = calendarToday.timeInMillis
+    calendarToday.set(java.util.Calendar.DAY_OF_MONTH, 1)
+    val startOfMonth = calendarToday.timeInMillis
+    val todayLots = lots.count { it.collectionTimestamp >= startOfToday }
+    val monthLots = lots.count { it.collectionTimestamp >= startOfMonth }
+
+    val lastSyncedTime = if (lastSyncTimestamp > 0L) {
+        java.text.SimpleDateFormat(
+            "h:mm a",
+            java.util.Locale.ENGLISH
+        ).format(java.util.Date(lastSyncTimestamp))
+    } else {
+        "—"
+    }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        // ----- 2 x 2 stat cards (Today / Month / Total / Pending) -----
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    StatCard(
+                        modifier = Modifier.weight(1f),
+                        label = when (language) {
+                            Language.ENGLISH -> "Today's Earnings"
+                            Language.HINDI -> "आज की कमाई"
+                            Language.MARATHI -> "आजची कमाई"
+                        },
+                        value = "₹${todaySettled.toInt()}",
+                        subtitle = "From $todayLots lots",
+                        bgColor = EcoMint,
+                        valueColor = EcoGreenPrimary
+                    )
+                    StatCard(
+                        modifier = Modifier.weight(1f),
+                        label = "Total Cash Settled",
+                        value = "₹${totalSettled.toInt()}",
+                        subtitle = "Verified CPCB payout",
+                        bgColor = EcoGreenDeep,
+                        valueColor = Color.White,
+                        labelColor = Color.White.copy(alpha = 0.8f),
+                        subtitleColor = EcoGreenBright
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    StatCard(
+                        modifier = Modifier.weight(1f),
+                        label = when (language) {
+                            Language.ENGLISH -> "This Month"
+                            Language.HINDI -> "इस महीने"
+                            Language.MARATHI -> "या महिन्यात"
+                        },
+                        value = "₹${monthSettled.toInt()}",
+                        subtitle = "From $monthLots lots",
+                        bgColor = EcoBlueBg,
+                        valueColor = EcoBlueAccent
+                    )
+                    StatCard(
+                        modifier = Modifier.weight(1f),
+                        label = when (language) {
+                            Language.ENGLISH -> "Pending Handover"
+                            Language.HINDI -> "हस्तांतरण शेष"
+                            Language.MARATHI -> "हस्तांतरण प्रलंबित"
+                        },
+                        value = "₹${pendingDues.toInt()}",
+                        subtitle = "Payable on weigh-in",
+                        bgColor = EcoOrangeBg,
+                        valueColor = EcoOrangeAccent
+                    )
+                }
+            }
+        }
+
+        // ----- Nearby Recyclers (featured partner strip) -----
+        item {
+            val featured = recyclers.minByOrNull { it.distanceKm }
+            if (featured != null) {
+                Card(
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = EcoGreenDeep),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpenRecyclers() }
+                        .testTag("featured_recycler_card")
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = when (language) {
+                                Language.ENGLISH -> "Nearby Recyclers"
+                                Language.HINDI -> "आसपास के रीसायकलर"
+                                Language.MARATHI -> "जवळील रीसायकलर"
+                            },
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp
+                        )
+                        Text(
+                            text = when (language) {
+                                Language.ENGLISH -> "Authorized partners near you"
+                                Language.HINDI -> "आपके निकट अधिकृत पार्टनर"
+                                Language.MARATHI -> "तुमच्या जवळील अधिकृत भागीदार"
+                            },
+                            color = Color.White.copy(alpha = 0.75f),
+                            fontSize = 11.sp
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color.White.copy(alpha = 0.16f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(text = "🏭", fontSize = 22.sp)
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = featured.name,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "${featured.city}, ${featured.facilityLocation} • ₹${featured.buyingRates.values.maxOrNull()?.toInt() ?: 0}/kg",
+                                    color = Color.White.copy(alpha = 0.8f),
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color.White.copy(alpha = 0.18f)
+                            ) {
+                                Text(
+                                    text = "${featured.distanceKm} km",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ----- Scan E-Waste (camera CTA lives here, NOT in the header) -----
+        item {
+            Card(
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = EcoGreenPrimary),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onScanEwaste() }
+                    .testTag("scan_ewaste_action_btn")
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(18.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(Color.White.copy(alpha = 0.16f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CameraAlt,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = when (language) {
+                                Language.ENGLISH -> "Scan E-Waste"
+                                Language.HINDI -> "स्कैन करें"
+                                Language.MARATHI -> "स्कॅन करा"
+                            },
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp
+                        )
+                        Text(
+                            text = when (language) {
+                                Language.ENGLISH -> "AI camera valuation • create a digital lot"
+                                Language.HINDI -> "AI कैमरा मूल्यांकन • डिजिटल लॉट बनाएं"
+                                Language.MARATHI -> "AI कॅमेरा मूल्यांकन • डिजिटल लॉट तयार करा"
+                            },
+                            color = Color.White.copy(alpha = 0.8f),
+                            fontSize = 12.sp
+                        )
+                    }
+                    Icon(
+                        imageVector = Icons.Default.ChevronRight,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+        }
+
+        // ----- CPCB Sync (live offline/sync state + Sync Now) -----
+        item {
+            Card(
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = EcoWhite),
+                border = androidx.compose.foundation.BorderStroke(1.dp, EcoBorder),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(EcoMint),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = if (isOffline) Icons.Default.CloudOff else Icons.Default.CloudDone,
+                                    contentDescription = null,
+                                    tint = if (isOffline) WarningAmber else SuccessGreen,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = when {
+                                        isSyncing -> "CPCB Database Syncing..."
+                                        isOffline -> "CPCB Database Offline"
+                                        unsyncedCount > 0 -> "CPCB Database Pending Sync"
+                                        else -> "CPCB Database Synced"
+                                    },
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp,
+                                    color = EcoTextPrimary
+                                )
+                                Text(
+                                    text = if (lastSyncTimestamp > 0L)
+                                        "Last synced at $lastSyncedTime"
+                                    else "Not synced yet",
+                                    fontSize = 11.sp,
+                                    color = EcoTextSecondary
+                                )
+                            }
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = EcoGreenPrimary,
+                            modifier = Modifier.clickable { onManualSync() }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = if (isSyncing) "Syncing..." else "Sync Now",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = EcoMint,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, EcoBorder)
+                        ) {
+                            Text(
+                                text = "Offline-First active",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = EcoGreenPrimary,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                        Text(
+                            text = if (isOffline) "Records stored locally"
+                            else if (unsyncedCount > 0) "$unsyncedCount changes queued"
+                            else "All records synced",
+                            fontSize = 10.sp,
+                            color = EcoTextSecondary
+                        )
+                    }
+                }
+            }
+        }
+
+        // ----- Nearby Recyclers (full list section) -----
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = when (language) {
+                            Language.ENGLISH -> "Nearby Recyclers"
+                            Language.HINDI -> "आसपास के रीसायकलर"
+                            Language.MARATHI -> "जवळील रीसायकलर"
+                        },
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        color = EcoTextPrimary
+                    )
+                    Text(
+                        text = when (language) {
+                            Language.ENGLISH -> "Find authorized recyclers near your location"
+                            Language.HINDI -> "अपने आस-पास अधिकृत रीसायकलर खोजें"
+                            Language.MARATHI -> "तुमच्या जवळील अधिकृत रीसायकलर शोधा"
+                        },
+                        fontSize = 11.sp,
+                        color = EcoTextSecondary
+                    )
+                }
+                Text(
+                    text = when (language) {
+                        Language.ENGLISH -> "View Nearby"
+                        Language.HINDI -> "आस-पास देखें"
+                        Language.MARATHI -> "जवळील पहा"
+                    },
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = EcoGreenPrimary,
+                    modifier = Modifier
+                        .clickable { onOpenRecyclers() }
+                        .padding(4.dp)
+                )
+            }
+        }
+
+        items(recyclers) { rec ->
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = EcoWhite),
+                border = androidx.compose.foundation.BorderStroke(1.dp, EcoBorder),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpenRecyclers() }
+                    .testTag("home_recycler_card_${rec.recyclerId.lowercase()}")
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(11.dp))
+                                .background(EcoMint),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(text = "🏭", fontSize = 20.sp)
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = rec.name,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = EcoTextPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Star,
+                                    contentDescription = null,
+                                    tint = EcoOrangeAccent,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Spacer(modifier = Modifier.width(2.dp))
+                                Text(
+                                    text = "${rec.rating}",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = EcoTextPrimary
+                                )
+                                Text(
+                                    text = " • ${rec.facilityLocation}",
+                                    fontSize = 11.sp,
+                                    color = EcoTextSecondary
+                                )
+                            }
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = EcoMint
+                        ) {
+                            Text(
+                                text = "${rec.distanceKm} km",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = EcoGreenPrimary,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    val bestRate = rec.buyingRates.values.maxOrNull()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (bestRate != null) "₹${bestRate.toInt()}/kg" else "Rate unavailable",
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 16.sp,
+                            color = EcoGreenPrimary
+                        )
+                        Text(
+                            text = rec.acceptedCategories
+                                .take(3)
+                                .joinToString(", ") { cat ->
+                                    when (language) {
+                                        Language.ENGLISH -> cat.titleEn
+                                        Language.HINDI -> cat.titleHi
+                                        Language.MARATHI -> cat.titleMr
+                                    }
+                                },
+                            fontSize = 10.sp,
+                            color = EcoTextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            RecyclerBadge(
+                                label = if (rec.doorstepPickup) "Pickup Available" else "Self Drop-off",
+                                icon = Icons.Default.LocalShipping
+                            )
+                            RecyclerBadge(
+                                label = if (rec.paymentModesOffered.any { it == PaymentMode.UPI }) "Digital Receipt" else "Instant Cash",
+                                icon = Icons.Default.QrCode2
+                            )
+                        }
+                        Text(
+                            text = "View Details",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = EcoGreenPrimary
+                        )
+                    }
+                }
+            }
+        }
+
+        // ----- Filter Lots -----
+        item {
+            Column {
+                Text(
+                    text = when (language) {
+                        Language.ENGLISH -> "Filter Lots"
+                        Language.HINDI -> "लॉट फ़िल्टर करें"
+                        Language.MARATHI -> "लॉट फिल्टर करा"
+                    },
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                    color = EcoTextPrimary
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                LotFilterRow(
+                    language = language,
+                    statusFilter = statusFilter,
+                    categoryFilter = categoryFilter,
+                    sortNewestFirst = sortNewestFirst,
+                    hasActiveFilters = hasActiveFilters,
+                    onStatusFilter = onStatusFilter,
+                    onCategoryFilter = onCategoryFilter,
+                    onSortChange = onSortChange,
+                    onClearFilters = onClearFilters
+                )
+            }
+        }
+
+        // ----- Active & Completed Digital Lots -----
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = when (language) {
+                            Language.ENGLISH -> "Active & Completed Digital Lots"
+                            Language.HINDI -> "सक्रिय एवं पूर्ण डिजिटल लॉट"
+                            Language.MARATHI -> "सक्रिय व पूर्ण झालेले लॉट्स"
+                        },
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        color = EcoTextPrimary
+                    )
+                    Text(
+                        text = "$activeLots active • ${lots.count { it.status == LotStatus.PAYMENT_COMPLETED }} completed",
+                        fontSize = 11.sp,
+                        color = EcoTextSecondary
+                    )
+                }
+                if (hasActiveFilters) {
+                    Text(
+                        text = "Clear",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = EcoGreenPrimary,
+                        modifier = Modifier
+                            .clickable { onClearFilters() }
+                            .padding(4.dp)
+                    )
+                }
+            }
+        }
+
+        if (lots.isEmpty()) {
+            item {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 20.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(22.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(text = "📦", fontSize = 36.sp)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = if (hasActiveFilters) "No lots match the selected filters"
+                            else "No Digital Lots Created Yet",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = EcoTextPrimary
+                        )
+                        Text(
+                            text = if (hasActiveFilters) "Clear filters or scan new e-waste"
+                            else "Tap 'Scan E-Waste' to photograph and valuate materials",
+                            fontSize = 12.sp,
+                            color = EcoTextSecondary
+                        )
+                    }
+                }
+            }
+        } else {
+            items(lots) { lot ->
+                LotItemCard(
+                    lot = lot,
+                    language = language,
+                    isAnomalous = lot.lotId in anomalousLotIds,
+                    onClick = { onSelectLot(lot) }
+                )
+            }
+        }
+
+        // ----- AI Voice Assistant -----
+        item {
+            Card(
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = EcoGreenDeep),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onStartAssistant() }
+                    .testTag("ai_assistant_bar")
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AutoAwesome,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = when (language) {
+                                Language.ENGLISH -> "Ask AI E-Waste Assistant"
+                                Language.HINDI -> "AI ई-वेस्ट असिस्टेंट से पूछें"
+                                Language.MARATHI -> "AI ई-वेस्ट सहायकाला विचारा"
+                            },
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp
+                        )
+                        Text(
+                            text = when (language) {
+                                Language.ENGLISH -> "Voice queries on disposal, prices & CPCB rules"
+                                Language.HINDI -> "निपटान, दरें और CPCB नियमों पर वॉइस क्वेरी"
+                                Language.MARATHI -> "विसर्जन, दर आणि CPCB नियमांवरील व्हॉइस प्रश्न"
+                            },
+                            color = Color.White.copy(alpha = 0.8f),
+                            fontSize = 11.sp
+                        )
+                    }
+                    Icon(
+                        imageVector = Icons.Default.Mic,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+        }
+
+        item {
+            Spacer(modifier = Modifier.height(140.dp))
+        }
+    }
+}
+
+@Composable
+private fun StatCard(
+    modifier: Modifier,
+    label: String,
+    value: String,
+    subtitle: String,
+    bgColor: Color,
+    valueColor: Color,
+    labelColor: Color = EcoTextSecondary,
+    subtitleColor: Color = EcoTextSecondary
+) {
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = bgColor),
+        modifier = modifier
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text(
+                text = label,
+                color = labelColor,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = value,
+                color = valueColor,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 22.sp
+            )
+            Text(
+                text = subtitle,
+                color = subtitleColor,
+                fontSize = 10.sp
+            )
+        }
+    }
+}
+
+// Shared, fully functional lot filter row (Home preview + My Lots).
+@Composable
+fun LotFilterRow(
+    language: Language,
+    statusFilter: String?,
+    categoryFilter: String?,
+    sortNewestFirst: Boolean,
+    hasActiveFilters: Boolean,
+    onStatusFilter: (String?) -> Unit,
+    onCategoryFilter: (String?) -> Unit,
+    onSortChange: (Boolean) -> Unit,
+    onClearFilters: () -> Unit
+) {
+    val statusItems = LotStatus.entries.map { it.name to it.getLabel(language) }
+    val categoryItems = MaterialCategory.entries.map { it.name to it.getTitle(language) }
+    val sortItems = listOf(
+        "newest" to when (language) {
+            Language.ENGLISH -> "Date (Newest)"
+            Language.HINDI -> "तारीख (नवीन)"
+            Language.MARATHI -> "तारीख (नवीन)"
+        },
+        "oldest" to when (language) {
+            Language.ENGLISH -> "Date (Oldest)"
+            Language.HINDI -> "तारीख (जुने)"
+            Language.MARATHI -> "तारीख (जुने)"
+        }
+    )
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FilterChipDropdown(
+                selectedLabel = statusItems.firstOrNull { it.first == statusFilter }?.second
+                    ?: when (language) {
+                        Language.ENGLISH -> "All Status"
+                        Language.HINDI -> "सभी स्थिति"
+                        Language.MARATHI -> "सर्व स्थिती"
+                    },
+                items = statusItems,
+                modifier = Modifier.weight(1f),
+                onSelect = { onStatusFilter(it.takeIf { key -> key != statusFilter }) }
+            )
+            FilterChipDropdown(
+                selectedLabel = categoryItems.firstOrNull { it.first == categoryFilter }?.second
+                    ?: when (language) {
+                        Language.ENGLISH -> "All Categories"
+                        Language.HINDI -> "सभी श्रेणियां"
+                        Language.MARATHI -> "सर्व श्रेणी"
+                    },
+                items = categoryItems,
+                modifier = Modifier.weight(1f),
+                onSelect = { onCategoryFilter(it.takeIf { key -> key != categoryFilter }) }
+            )
+            FilterChipDropdown(
+                selectedLabel = sortItems.firstOrNull {
+                    (it.first == "newest") == sortNewestFirst
+                }?.second ?: sortItems.first().second,
+                items = sortItems,
+                modifier = Modifier.weight(1f),
+                onSelect = { onSortChange(it == "newest") }
+            )
+        }
+        if (hasActiveFilters) {
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = when (language) {
+                        Language.ENGLISH -> "Clear"
+                        Language.HINDI -> "साफ़ करें"
+                        Language.MARATHI -> "साफ करा"
+                    },
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = EcoGreenPrimary,
+                    modifier = Modifier
+                        .clickable { onClearFilters() }
+                        .padding(top = 8.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FilterChipDropdown(
+    selectedLabel: String,
+    items: List<Pair<String, String>>,
+    modifier: Modifier,
+    onSelect: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier = modifier) {
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = EcoWhite,
+            border = androidx.compose.foundation.BorderStroke(1.dp, EcoBorder),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = true }
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = selectedLabel,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = EcoTextPrimary,
+                    modifier = Modifier.weight(1f, fill = true)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Icon(
+                    imageVector = Icons.Default.ArrowDropDown,
+                    contentDescription = null,
+                    tint = EcoTextSecondary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            items.forEach { (key, label) ->
+                DropdownMenuItem(
+                    text = { Text(text = label, fontSize = 13.sp) },
+                    onClick = {
+                        expanded = false
+                        onSelect(key)
+                    }
+                )
+            }
+        }
+    }
+}
+
+// Full-screen "My Lots" list sharing the same real filters as the Home tab.
+@Composable
+fun MyLotsTab(
+    lots: List<MaterialLot>,
+    language: Language,
+    onSelectLot: (MaterialLot) -> Unit,
+    onScanEwaste: () -> Unit,
+    anomalousLotIds: Set<String>,
+    hasActiveFilters: Boolean,
+    statusFilter: String?,
+    categoryFilter: String?,
+    sortNewestFirst: Boolean,
+    onStatusFilter: (String?) -> Unit,
+    onCategoryFilter: (String?) -> Unit,
+    onSortChange: (Boolean) -> Unit,
+    onClearFilters: () -> Unit
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "My Lots",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        color = EcoTextPrimary
+                    )
+                    Text(
+                        text = "${lots.size} digital lots",
+                        fontSize = 12.sp,
+                        color = EcoTextSecondary
+                    )
+                }
+                if (hasActiveFilters) {
+                    Text(
+                        text = "Clear",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = EcoGreenPrimary,
+                        modifier = Modifier
+                            .clickable { onClearFilters() }
+                            .padding(4.dp)
+                    )
+                }
+            }
+        }
+
+        item {
+            LotFilterRow(
+                language = language,
+                statusFilter = statusFilter,
+                categoryFilter = categoryFilter,
+                sortNewestFirst = sortNewestFirst,
+                hasActiveFilters = hasActiveFilters,
+                onStatusFilter = onStatusFilter,
+                onCategoryFilter = onCategoryFilter,
+                onSortChange = onSortChange,
+                onClearFilters = onClearFilters
+            )
+        }
+
+        if (lots.isEmpty()) {
+            item {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 24.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(text = "📦", fontSize = 36.sp)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = if (hasActiveFilters) "No lots match the selected filters"
+                            else "No Digital Lots Created Yet",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = EcoTextPrimary
+                        )
+                        Text(
+                            text = if (hasActiveFilters) "Clear filters or scan new e-waste"
+                            else "Tap 'Scan E-Waste' to photograph and valuate materials",
+                            fontSize = 12.sp,
+                            color = EcoTextSecondary
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = EcoGreenPrimary,
+                            modifier = Modifier.clickable { onScanEwaste() }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CameraAlt,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Scan E-Waste",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            items(lots) { lot ->
+                LotItemCard(
+                    lot = lot,
+                    language = language,
+                    isAnomalous = lot.lotId in anomalousLotIds,
+                    onClick = { onSelectLot(lot) }
+                )
+            }
+        }
+
+        item {
+            Spacer(modifier = Modifier.height(140.dp))
+        }
+    }
+}
+
+// Collector profile: identity, CPCB verification, real sync/location status and
+// quick access. No fabricated stats.
+@Composable
+fun CollectorProfileTab(
+    collectorPhone: String,
+    collectorLocation: CollectorLocationEntity?,
+    isOffline: Boolean,
+    isSyncing: Boolean,
+    unsyncedCount: Int,
+    lastSyncTimestamp: Long,
+    language: Language,
+    onToggleOffline: () -> Unit,
+    onManualSync: () -> Unit,
+    onOpenSafety: () -> Unit,
+    onSignOut: () -> Unit,
+    onOpenLots: () -> Unit,
+    onCreateLot: () -> Unit
+) {
+    val sharingOn = collectorLocation?.isSharingOn == true
+    val phoneLabel = "+91 ${collectorPhone.trim().removePrefix("+91").trim()}"
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        // Identity card
+        item {
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = EcoGreenPrimary),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 6.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.16f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Person,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(30.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "E-Waste Collector",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp
+                        )
+                        Text(
+                            text = phoneLabel,
+                            color = Color.White.copy(alpha = 0.85f),
+                            fontSize = 13.sp
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Verified,
+                                contentDescription = null,
+                                tint = EcoGreenBright,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "CPCB Verified Collector",
+                                color = Color.White.copy(alpha = 0.9f),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Real sync + location status
+        item {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                border = androidx.compose.foundation.BorderStroke(1.dp, EcoBorder),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = if (sharingOn) Icons.Default.Share else Icons.Default.LocationOn,
+                                contentDescription = null,
+                                tint = if (sharingOn) SuccessGreen else TextSecondaryMuted,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = if (sharingOn) "Location sharing ON" else "Location sharing OFF",
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.sp,
+                                color = EcoTextPrimary
+                            )
+                        }
+                        Text(
+                            text = if (isOffline) "Offline" else "Online",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isOffline) WarningAmber else SuccessGreen
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    // Compact manual sync action
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = EcoMint,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                if (isOffline) onToggleOffline() else onManualSync()
+                            }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = null,
+                                tint = EcoGreenPrimary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (isOffline) "Switch Online to sync"
+                                else if (isSyncing) "Syncing with CPCB..."
+                                else if (unsyncedCount > 0) "$unsyncedCount changes queued — tap to sync"
+                                else "All records synced with CPCB",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = EcoGreenPrimary
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Quick access
+        item {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                border = androidx.compose.foundation.BorderStroke(1.dp, EcoBorder),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(6.dp)) {
+                    ProfileRow(
+                        emoji = "📦",
+                        title = "My Lots",
+                        subtitle = "View all digital lots",
+                        onClick = onOpenLots
+                    )
+                    ProfileRow(
+                        emoji = "📷",
+                        title = "Scan E-Waste",
+                        subtitle = "Create a new digital lot",
+                        onClick = onCreateLot
+                    )
+                    ProfileRow(
+                        emoji = "🛡️",
+                        title = "Safety Guidelines",
+                        subtitle = "Hazardous e-waste handling safety",
+                        onClick = onOpenSafety
+                    )
+                }
+            }
+        }
+
+        // Sign out
+        item {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = Color.White,
+                border = androidx.compose.foundation.BorderStroke(1.dp, ErrorRed.copy(alpha = 0.4f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onSignOut() }
+                    .testTag("profile_sign_out")
+            ) {
+                Row(
+                    modifier = Modifier.padding(vertical = 14.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = null,
+                        tint = ErrorRed,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Sign Out",
+                        color = ErrorRed,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
+                }
+            }
+        }
+
+        item {
+            Spacer(modifier = Modifier.height(140.dp))
+        }
+    }
+}
+
+@Composable
+private fun ProfileRow(
+    emoji: String,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(horizontal = 10.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(text = emoji, fontSize = 20.sp)
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 14.sp,
+                color = EcoTextPrimary
+            )
+            Text(
+                text = subtitle,
+                fontSize = 11.sp,
+                color = EcoTextSecondary
+            )
+        }
+        Icon(
+            imageVector = Icons.Default.ChevronRight,
+            contentDescription = null,
+            tint = EcoTextSecondary,
+            modifier = Modifier.size(18.dp)
+        )
+    }
+}
+
+@Composable
+private fun RecyclerBadge(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector
+) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = EcoMint,
+        modifier = Modifier
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = ForestGreenPrimary,
+                modifier = Modifier.size(12.dp)
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+                text = label,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = ForestGreenPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 
@@ -1212,13 +2715,78 @@ fun RecyclersTab(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
+                    // Live buying rate + supported categories (from real recycler data)
+                    val bestRate = rec.buyingRates.values.maxOrNull()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = if (bestRate != null) "₹${bestRate.toInt()}/kg" else "Rate unavailable",
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 18.sp,
+                                color = EcoGreenPrimary
+                            )
+                            Text(
+                                text = "Top rate offered • " + rec.acceptedCategories
+                                    .take(3)
+                                    .joinToString(", ") { cat ->
+                                        when (language) {
+                                            Language.ENGLISH -> cat.titleEn
+                                            Language.HINDI -> cat.titleHi
+                                            Language.MARATHI -> cat.titleMr
+                                        }
+                                    },
+                                fontSize = 10.sp,
+                                color = TextSecondaryMuted,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MintLight
+                        ) {
+                            Text(
+                                text = "${rec.acceptedCategories.size} categories",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = ForestGreenPrimary,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Feature badges = Pickup + payment modes actually offered
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        if (rec.doorstepPickup) {
+                            RecyclerBadge(label = "Pickup Available", icon = Icons.Default.LocalShipping)
+                        }
+                        RecyclerBadge(
+                            label = if (rec.paymentModesOffered.any { it == PaymentMode.UPI }) "UPI" else "Instant Cash",
+                            icon = Icons.Default.CurrencyRupee
+                        )
+                        if (rec.paymentModesOffered.any { it == PaymentMode.BANK_TRANSFER }) {
+                            RecyclerBadge(label = "Bank", icon = Icons.Default.CurrencyRupee)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Instant Cash on Scale or UPI",
+                            text = "Scale weigh-in • e-receipt",
                             fontSize = 11.sp,
                             color = TextSecondaryMuted
                         )

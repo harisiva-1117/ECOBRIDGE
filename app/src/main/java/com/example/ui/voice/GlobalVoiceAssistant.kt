@@ -105,6 +105,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -131,6 +132,17 @@ import kotlin.math.sin
  * Allows informal collectors, recyclers, and citizens to ask natural language questions
  * regarding e-waste disposal, hazardous material segregation, and CPCB 2022 guidelines.
  */
+/**
+ * Lifted above-scaffold bottom bars so the floating voice dock never covers a
+ * bottom navigation bar's touch targets. A screen that renders its own bottom
+ * navigation sets [height] (Dp) while it is composed and the dock re-docks
+ * itself just above that bar; screens without a bottom bar leave it 0.dp.
+ */
+object BottomsFloatingDockInset {
+    var height: androidx.compose.runtime.MutableState<Dp> =
+        androidx.compose.runtime.mutableStateOf(0.dp)
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun GlobalVoiceAssistantBar(
@@ -208,6 +220,7 @@ fun GlobalVoiceAssistantBar(
     Column(
         modifier = modifier
             .fillMaxWidth()
+            .padding(bottom = BottomsFloatingDockInset.height.value)
             .imePadding()
             .padding(horizontal = 16.dp, vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally

@@ -99,15 +99,19 @@ fun MainAppNavHost(
             }
         }
 
-        // Universal Voice Assistant overlay available across all application sections
-        GlobalVoiceAssistantBar(
-            voiceEngine = viewModel.voiceEngine,
-            currentLanguage = currentLanguage,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .imePadding()
-        )
+        // Universal Voice Assistant overlay available across all application sections.
+        // Hidden on the intro chooser: the intro has its own microphone UI and the
+        // reference design (image 2) shows no bottom assistant dock there.
+        if (currentDestination != null) {
+            GlobalVoiceAssistantBar(
+                voiceEngine = viewModel.voiceEngine,
+                currentLanguage = currentLanguage,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .imePadding()
+            )
+        }
     }
 }
 
